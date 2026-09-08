@@ -1,0 +1,35 @@
+{
+  "name": "pi-okf-agent-memory",
+  "version": "0.1.0",
+  "description": "Git-native persistent project memory (OKF v0.2) for the pi coding agent: BM25 search over knowledge/, validation gate, /knowledge-review, and resume-time index injection.",
+  "license": "MIT",
+  "type": "module",
+  "keywords": [
+    "pi-package",
+    "memory",
+    "okf",
+    "knowledge-base",
+    "agent-memory",
+    "persistent-memory"
+  ],
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ],
+    "skills": [
+      "./skills"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    },
+    "typebox": {
+      "optional": true
+    }
+  }
+}
