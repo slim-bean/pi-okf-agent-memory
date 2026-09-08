@@ -4,6 +4,8 @@
  * Run: node test/smoke.mjs
  */
 import { createJiti } from "/home/sandbox/.npm-global/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/jiti/lib/jiti.mjs";
+import { rmSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 
 const PI_DIR = "/home/sandbox/.npm-global/lib/node_modules/@earendil-works/pi-coding-agent";
 const jiti = createJiti(import.meta.url, {
@@ -47,7 +49,7 @@ const mockPi2 = {
 
 const ctx = { cwd: "/workspace", ui: { notify: () => {} } };
 
-// 1. reload: no injection (would duplicate); startup DOES inject (yono cron sessions start fresh)
+// 1. reload: no injection (would duplicate); startup DOES inject (cron-dispatched sessions start fresh)
 captured.session_start({ reason: "reload" }, ctx);
 if (captured.lastMessage) throw new Error("reload should not inject");
 console.log("PASS session_start(reload): no injection");
@@ -95,5 +97,25 @@ try {
 captured["cmd:knowledge-review"]?.(undefined, { ui: { notify: () => {} } });
 if (!captured.lastUserMessage?.includes("knowledge review")) throw new Error("knowledge-review did not send prompt");
 console.log("PASS knowledge-review prompt:", JSON.stringify(captured.lastUserMessage?.slice(0, 40)));
+
+// 7. empty corpus -> bootstrap nudge (not index injection)
+const emptyHost = "/tmp/empty-bundle-host";
+rmSync(emptyHost, { recursive: true, force: true });
+execFileSync("/tmp/pkgtest/bin/okf", ["init", `${emptyHost}/knowledge`]);
+const emptyCtx = { cwd: emptyHost, ui: { notify: () => {} } };
+captured.lastMessage = undefined;
+captured.session_start({ reason: "resume" }, emptyCtx);
+if (!captured.lastMessage?.msg?.content.includes("no concepts yet")) throw new Error("empty corpus should get bootstrap nudge");
+if (captured.lastMessage.msg.content.includes("Anti-bloat")) throw new Error("empty corpus must not claim concepts exist");
+console.log("PASS session_start(empty corpus): bootstrap nudge");
+
+// 8. no bundle at all -> non-intrusive notify, no injection
+captured.lastMessage = undefined;
+let notified = null;
+const noBundleCtx = { cwd: "/tmp/empty-no-knowledge", ui: { notify: (msg) => { notified = msg; } } };
+captured.session_start({ reason: "resume" }, noBundleCtx);
+if (captured.lastMessage) throw new Error("missing bundle should not inject a turn");
+if (!notified?.includes("okf init")) throw new Error("missing bundle should notify with init hint");
+console.log("PASS session_start(missing bundle): notify hint, no injection");
 
 console.log("\nALL SMOKE TESTS PASSED");

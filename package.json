@@ -1,6 +1,6 @@
 {
   "name": "pi-okf-agent-memory",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Git-native persistent project memory (OKF v0.2) for the pi coding agent: BM25 search over knowledge/, validation gate, /knowledge-review, and resume-time index injection.",
   "license": "MIT",
   "type": "module",

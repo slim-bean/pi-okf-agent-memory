@@ -14,7 +14,8 @@
  *
  * Configuration (all optional):
  *  - OKF_BIN            path to the okf binary (default: <this dir>/bin/okf, then PATH)
- *  - OKF_KNOWLEDGE_DIR  path to the OKF bundle (default: <cwd>/knowledge, then /workspace/knowledge)
+ *  - OKF_KNOWLEDGE_DIR  path to the OKF bundle (default: <cwd>/knowledge; workspace-rooted
+ *                        deployments sharing a top-level bundle also fall back to /workspace/knowledge)
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -41,7 +42,8 @@ function resolveOkfBin(): string | null {
 }
 
 /** Locate the knowledge bundle: $OKF_KNOWLEDGE_DIR, <cwd>/knowledge, and for
- * /workspace-rooted sessions (e.g. yono sandboxes) the shared /workspace/knowledge. */
+ * workspace-rooted deployments (container sandboxes, shared workspaces) the
+ * top-level /workspace/knowledge. Inert everywhere else. */
 function resolveKnowledgeDir(cwd: string): string | null {
 	const candidates = [
 		process.env.OKF_KNOWLEDGE_DIR,
@@ -199,26 +201,47 @@ export default function okfMemoryExtension(pi: ExtensionAPI) {
 
 	// -------------------------------------------------------- session hooks
 
-	// On new/resume/fork (not startup/reload: AGENTS.md and the skill already
-	// cover those), queue the corpus index so an amnesiac session immediately
-	// sees the durable state. nextTurn = no turn is triggered; it rides along
-	// with the user's next prompt.
+	// On new/resume/fork/startup (not reload: the index was already queued this
+	// runtime), queue the corpus index so an amnesiac session immediately sees
+	// the durable state. nextTurn = no turn is triggered; it rides along with
 	pi.on("session_start", async (event, ctx) => {
 		if (event.reason === "reload") return;
 		const dir = resolveKnowledgeDir(ctx.cwd);
-		if (!dir) return;
-		try {
-			const index = readFileSync(join(dir, "index.md"), "utf8");
-			pi.sendMessage(
-				{
-					customType: "okf-memory",
-					content:
-						`[okf-memory] Persistent project knowledge corpus at ${dir} — consult it for prior decisions, ` +
-						`constraints and lessons before substantive work (memory_search / memory_show). Index:\n\n${index}`,
-					display: true,
-				},
-				{ deliverAs: "nextTurn" },
+		const writeNudge =
+			"Write discipline: knowledge/ records only the WHY (git records the what, runbooks the how). " +
+			"Before writing, apply the re-derivation test: would you plausibly re-derive this? " +
+			"Most good reviews end in no writes.";
+		const emptyCorpusNudge =
+			`[okf-memory] A knowledge corpus exists at ${dir} but has no concepts yet — that is fine, and it should stay that way until you learn something durable.\n\n` +
+			"- If this project is new: when you learn its purpose and constraints, record them as project/overview (okf create).\n" +
+			"- If this project has been running a while: write project/overview plus AT MOST the one or two decisions that visibly shaped the workspace. NOT a history — do not mine past sessions.\n" +
+			"- After that, write only when the re-derivation test passes. Then run memory_validate and commit the bundle (it should be a git repo).";
+		const countConcepts = (indexText: string) => (indexText.match(/^\s*\*\s*\[/gm) ?? []).length;
+		const missingBundleHint =
+			"No knowledge bundle found — run `okf init knowledge` to create one, or set OKF_KNOWLEDGE_DIR. " +
+			"See the okf-memory skill for the write discipline.";
+
+		const okfBinMissing = resolveOkfBin();
+		if (!okfBinMissing && event.reason === "startup") {
+			// Binary resolution failed: surface once, non-intrusively, instead of failing later per tool call.
+			void ctx.ui?.notify?.(
+				"[okf-memory] okf binary not found — set OKF_BIN, place bin/okf next to this extension, or add okf to PATH.",
+				"warning",
 			);
+		}
+
+		try {
+			if (!dir) {
+				if (event.reason !== "startup") void ctx.ui?.notify?.(`[okf-memory] ${missingBundleHint}`, "info");
+				return;
+			}
+			const index = readFileSync(join(dir, "index.md"), "utf8");
+			const content =
+				countConcepts(index) === 0
+					? emptyCorpusNudge
+					: `[okf-memory] Persistent project knowledge corpus at ${dir} — consult it for prior decisions, ` +
+						`constraints and lessons before substantive work (memory_search / memory_show). ${writeNudge}. Index:\n\n${index}`;
+			pi.sendMessage({ customType: "okf-memory", content, display: true }, { deliverAs: "nextTurn" });
 		} catch {
 			// Non-fatal: knowledge injection is best-effort.
 		}
