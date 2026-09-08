@@ -10,7 +10,9 @@ KNOWLEDGE_DIR="${2:-}"
 mkdir -p "$TARGET/.pi/extensions" "$TARGET/.pi/skills"
 cp "$SRC/index.ts" "$TARGET/.pi/extensions/okf-memory.ts"
 cp -r "$SRC/skills/okf-memory" "$TARGET/.pi/skills/"
-echo "Installed extension -> $TARGET/.pi/extensions/okf-memory.ts"
+mkdir -p "$TARGET/.pi/extensions/bin"
+cp "$SRC/bin/okf" "$TARGET/.pi/extensions/bin/okf"
+echo "Installed extension -> $TARGET/.pi/extensions/okf-memory.ts (+ bin/okf)"
 echo "Installed skill      -> $TARGET/.pi/skills/okf-memory/"
 
 # Knowledge bundle: explicit dir, <target>/knowledge, or reuse /workspace/knowledge
