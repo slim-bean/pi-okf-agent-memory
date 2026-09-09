@@ -28,9 +28,15 @@ import { fileURLToPath } from "node:url";
 
 const EXT_DIR = dirname(fileURLToPath(import.meta.url));
 
-/** Locate the okf binary: $OKF_BIN, sibling bin/okf, then PATH. */
-function resolveOkfBin(): string | null {
+/** Locate the okf binary: $OKF_BIN, a sibling build matching this runtime
+ * (bin/okf-<os>-<arch>), the legacy sibling bin/okf, then PATH. */
+export function resolveOkfBin(): string | null {
 	if (process.env.OKF_BIN && existsSync(process.env.OKF_BIN)) return process.env.OKF_BIN;
+	const arch = process.arch === "x64" ? "amd64" : process.arch === "arm64" ? "arm64" : null;
+	if (arch && (process.platform === "linux" || process.platform === "darwin")) {
+		const matched = join(EXT_DIR, "bin", `okf-${process.platform}-${arch}`);
+		if (existsSync(matched)) return matched;
+	}
 	const sibling = join(EXT_DIR, "bin", "okf");
 	if (existsSync(sibling)) return sibling;
 	for (const dir of (process.env.PATH ?? "").split(":")) {

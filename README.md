@@ -18,7 +18,7 @@ Then create a knowledge bundle if the project doesn't have one:
 okf init knowledge   # or let the extension find an existing ./knowledge
 ```
 
-Configuration (optional env): `OKF_BIN` (path to okf binary), `OKF_KNOWLEDGE_DIR` (bundle path). Defaults: `bin/okf` inside the installed package (then `PATH`), and `<cwd>/knowledge` (then `/workspace/knowledge`, only for /workspace-rooted deployments such as shared container workspaces).
+Configuration (optional env): `OKF_BIN` (path to okf binary; otherwise the build matching the host OS/arch is chosen), `OKF_KNOWLEDGE_DIR` (bundle path). Defaults: `bin/okf` inside the installed package (then `PATH`), and `<cwd>/knowledge` (then `/workspace/knowledge`, only for /workspace-rooted deployments such as shared container workspaces).
 
 ## Local (non-package) install
 

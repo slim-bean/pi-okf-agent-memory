@@ -11,8 +11,10 @@ mkdir -p "$TARGET/.pi/extensions" "$TARGET/.pi/skills"
 cp "$SRC/index.ts" "$TARGET/.pi/extensions/okf-memory.ts"
 cp -r "$SRC/skills/okf-memory" "$TARGET/.pi/skills/"
 mkdir -p "$TARGET/.pi/extensions/bin"
-cp "$SRC/bin/okf" "$TARGET/.pi/extensions/bin/okf"
-echo "Installed extension -> $TARGET/.pi/extensions/okf-memory.ts (+ bin/okf)"
+# Ship every architecture build; the extension picks the one matching its runtime.
+cp "$SRC"/bin/okf-* "$TARGET/.pi/extensions/bin/"
+cp "$SRC/bin/okf" "$TARGET/.pi/extensions/bin/okf" 2>/dev/null || true
+echo "Installed extension -> $TARGET/.pi/extensions/okf-memory.ts (+ bin/okf-* for linux/darwin amd64+arm64)"
 echo "Installed skill      -> $TARGET/.pi/skills/okf-memory/"
 
 # Knowledge bundle: explicit dir, <target>/knowledge, or — when the target itself
@@ -29,7 +31,16 @@ else
 fi
 
 if [ -n "${CANDIDATE:-}" ]; then
-  "$SRC/bin/okf" init "$CANDIDATE"
+  # Use the build matching this host for the init step.
+  OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
+  case "$(uname -m)" in
+    x86_64) ARCH=amd64 ;;
+    aarch64|arm64) ARCH=arm64 ;;
+    *) ARCH=unknown ;;
+  esac
+  OKF="$SRC/bin/okf-$OS-$ARCH"
+  [ -x "$OKF" ] || OKF="$SRC/bin/okf"
+  "$OKF" init "$CANDIDATE"
   # A bundle without history loses half its value; make it a git repo. Only set
   # a local identity when none resolves (developers usually have a global one).
   if [ ! -d "$CANDIDATE/.git" ]; then

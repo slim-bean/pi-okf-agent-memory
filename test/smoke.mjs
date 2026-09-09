@@ -4,7 +4,7 @@
  * Run: node test/smoke.mjs
  */
 import { createJiti } from "/home/sandbox/.npm-global/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/jiti/lib/jiti.mjs";
-import { rmSync } from "node:fs";
+import { rmSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 
 const PI_DIR = "/home/sandbox/.npm-global/lib/node_modules/@earendil-works/pi-coding-agent";
@@ -98,10 +98,26 @@ captured["cmd:knowledge-review"]?.(undefined, { ui: { notify: () => {} } });
 if (!captured.lastUserMessage?.includes("knowledge review")) throw new Error("knowledge-review did not send prompt");
 console.log("PASS knowledge-review prompt:", JSON.stringify(captured.lastUserMessage?.slice(0, 40)));
 
+// 9. binary resolution prefers the runtime-matched arch build
+{
+	const mod = await jiti.import("../index.ts");
+	if (!mod.resolveOkfBin) throw new Error("resolveOkfBin not exported");
+	const arch = process.arch === "x64" ? "amd64" : process.arch;
+	const expected = `/workspace/pi-okf-agent-memory/bin/okf-${process.platform}-${arch}`;
+	const got = mod.resolveOkfBin();
+	if (got !== expected) throw new Error(`resolveOkfBin = ${got}, want ${expected}`);
+	writeFileSync("/tmp/custom-okf-test", "#!/bin/sh\n", { mode: 0o755 });
+	process.env.OKF_BIN = "/tmp/custom-okf-test";
+	if (mod.resolveOkfBin() !== "/tmp/custom-okf-test") throw new Error("OKF_BIN override ignored");
+	delete process.env.OKF_BIN;
+	rmSync("/tmp/custom-okf-test");
+	console.log(`PASS resolveOkfBin: arch-matched (${process.platform}-${arch}), OKF_BIN override respected`);
+}
+
 // 7. empty corpus -> bootstrap nudge (not index injection)
 const emptyHost = "/tmp/empty-bundle-host";
 rmSync(emptyHost, { recursive: true, force: true });
-execFileSync("/tmp/pkgtest/bin/okf", ["init", `${emptyHost}/knowledge`]);
+execFileSync("/workspace/pi-okf-agent-memory/bin/okf", ["init", `${emptyHost}/knowledge`]);
 const emptyCtx = { cwd: emptyHost, ui: { notify: () => {} } };
 captured.lastMessage = undefined;
 captured.session_start({ reason: "resume" }, emptyCtx);
