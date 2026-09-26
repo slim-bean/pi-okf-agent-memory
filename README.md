@@ -1,72 +1,140 @@
 # pi-okf-agent-memory
 
-[pi coding-agent](https://pi.dev) extension + skill for [OKF Agent Memory](https://github.com/okf-memory/okf-agent-memory) — git-native persistent project memory (Google OKF v0.2) that survives context compaction and session boundaries.
+[pi](https://pi.dev) extension and skills for [OKF Agent Memory](https://github.com/okf-memory/okf-agent-memory): local, Git-native project memory that retains **why** decisions were made without turning session history into a knowledge dump.
 
-## Install (pi package)
+Release **0.2.0** bundles **OKF v0.4.3**. The corpus format remains **OKF v0.2**.
 
-```bash
-pi install git:github.com/slim-bean/pi-okf-agent-memory@v0.1.0        # user-level
-pi install -l git:github.com/slim-bean/pi-okf-agent-memory@v0.1.0    # project-level (.pi/settings.json)
-pi -e git:github.com/slim-bean/pi-okf-agent-memory                   # try without installing
-```
+## Install
 
-The repo ships a prebuilt `okf` binary under `bin/`, so no build step is needed. Refs are pinned; move to a newer release with `pi install git:github.com/slim-bean/pi-okf-agent-memory@<new-tag>`.
-
-Then create a knowledge bundle if the project doesn't have one:
+Test this checkout:
 
 ```bash
-okf init knowledge   # or let the extension find an existing ./knowledge
+pi install .
+# or try it for one invocation
+pi -e .
 ```
 
-Configuration (optional env): `OKF_BIN` (path to okf binary; otherwise the build matching the host OS/arch is chosen), `OKF_KNOWLEDGE_DIR` (bundle path). Defaults: `bin/okf` inside the installed package (then `PATH`), and `<cwd>/knowledge` (then `/workspace/knowledge`, only for /workspace-rooted deployments such as shared container workspaces).
-
-## Local (non-package) install
+Install this release using its pinned tag:
 
 ```bash
-./install.sh /path/to/project
+pi install git:github.com/slim-bean/pi-okf-agent-memory@v0.2.0
+pi install -l git:github.com/slim-bean/pi-okf-agent-memory@v0.2.0  # project-local
 ```
 
-This copies `index.ts` to `<project>/.pi/extensions/` (with `bin/okf` alongside) and the skill to `<project>/.pi/skills/okf-memory/`, then initializes `knowledge/` if absent. pi discovers both after project trust; `/reload` picks them up in a running session.
+Pinned refs do not move automatically. Select the new tag explicitly, then restart pi or `/reload`. The extension checks project upgrade progress when it loads; it does not poll for available package releases.
 
-```
-pi-okf-agent-memory/
-├── index.ts                  # pi extension (package entry point)
-├── bin/okf                   # okf CLI binary (built from okf-agent-memory, zero deps)
-├── skills/okf-memory/SKILL.md # agent skill teaching the memory workflow + write budget
-├── package.json              # pi package manifest (pi-package keyword, pi.extensions/skills)
-├── install.sh                # local .pi/ install for projects/sandboxes
-└── test/smoke.mjs            # jiti-based smoke tests (mock ExtensionAPI)
-```
-
-## What it gives a pi session
-
-| Surface | Kind | Purpose |
-|---|---|---|
-| `memory_search` | tool | BM25 search over `knowledge/` (<300µs). Use before writing, and at task start. |
-| `memory_show` | tool | Full concept: body, frontmatter (trust, status, stale_after), links. |
-| `memory_validate` | tool | Conformance + orphans + index drift + staleness. Persistence claims require a pass. |
-| `/memory-context` | command | Inject the corpus `index.md` into context on demand. |
-| `/knowledge-review` | command | Guided post-task review (convention §9) + validation. |
-| session_start hook | event | On new/resume/fork, queues the corpus index so a fresh or compacted session immediately knows durable state. |
-| okf-memory skill | skill | Teaches the **why-only write budget** — the anti-bloat guardrails. |
-
-## Install (project / sandbox, manual)
+Prebuilt binaries support macOS/Linux on arm64/amd64; no build step or database is needed. Package installation **does not add `okf` to PATH**. Use the resolved executable path supplied in session context, or a host-matched binary from this checkout:
 
 ```bash
-./install.sh /path/to/project
+./bin/okf-darwin-arm64 --version  # example for Apple Silicon
 ```
 
-This copies `index.ts` to `<project>/.pi/extensions/` and the skill to `<project>/.pi/skills/okf-memory/`, then initializes `knowledge/` if absent. pi discovers both after project trust; `/reload` picks them up in a running session.
+Git is required. On the first TUI session, accept the setup prompt (or run `/memory-setup`) to create an empty bundle and initialize Git inside it if no enclosing worktree exists. Package installation itself does not create project data. Setup never invents identity, commits, pushes, or approves upgrades; `/memory-upgrade` is the separate review/commit step.
 
-## Building okf from source
+RPC/headless startup never opens unsolicited dialogs. For provisioned TUI sessions without an operator, set `OKF_SETUP_MODE=manual` and provision the bundle or authorize the host setup protocol. See **[Setup and unattended provisioning](docs/setup.md)**, including Yono deployment notes.
+
+Optional environment variables:
+
+- `OKF_BIN`: explicit executable path (invalid overrides fail rather than silently falling back). Otherwise: host-matched package binary → legacy `bin/okf` → PATH.
+- `OKF_KNOWLEDGE_DIR`: explicit bundle path, relative to the session working directory if not absolute. Otherwise: `<cwd>/knowledge`, then an existing `/workspace/knowledge` only for `/workspace`-rooted deployments. Missing bundles are created at `<cwd>/knowledge` unless overridden.
+- `OKF_SETUP_MODE`: `prompt` (default: offer setup at TUI startup) or `manual` (no startup dialogs, including TUI). Neither value authorizes unattended writes.
+
+## Tools and commands
+
+| Surface | Purpose |
+|---|---|
+| `memory_search` | Text search (`query`) and code-path discovery (`for_path`), with optional `limit` (1–100) |
+| `memory_show` | Full concept body, provenance, lifecycle, governance and code references |
+| `memory_validate` | Structured diagnostics; `ok:true` requires a supported binary and **zero errors, gate findings, or warnings** |
+| `memory_upgrade` | Inspect status; retrieve/verify approved steps; finalize the required local Git commit |
+| `/memory-setup` | Confirm bundle/Git setup; `status` is read-only |
+| `/memory-context` | Queue the root index for the next turn |
+| `/knowledge-review` | Review this session for durable rationale; most reviews need no writes |
+| `/memory-upgrade` | Confirm and start/resume an ordered upgrade review |
+
+Session startup/resume/fork queues the index or an empty-corpus hint. Concept count comes from the CLI, not root-index formatting. The normal skill teaches search-before-write, governance, provenance, and the why-only write budget.
+
+## After an update
+
+A bundle with pending work shows a startup notice and persistent status:
+
+> pi-okf-agent-memory 0.2.0: 1 bundle upgrade step pending. Run /memory-upgrade to review it in order.
+
+**Startup inspection is read-only:** setup writes require user confirmation or a bound host setup request. No migration, ledger creation, or agent turn follows setup alone. Upgrade checks run on reload too; a short model-facing warning persists while work is pending. Missing Git setup is reported before upgrade review, not discovered only at its final commit.
+
+`/memory-upgrade` shows the ordered plan and asks for confirmation. The command authorizes review and the **required final local Git commit of the agent-owned knowledge bundle**—not arbitrary corpus edits or a push. The runner supplies the package's exact skill/step text directly, independently of skill discovery. Repairs still need an approved plan and rollback checkpoint.
+
+- Skipping package releases does not skip required steps. Completion advances only one step at a time after its deterministic checks pass. Completing several steps in the same tool batch is rejected: the next instructions must reach a subsequent model turn first.
+- Step progress lives in `<bundle>/.pi-okf-memory/state.json`, not a session or global acknowledgment. The runner commits that ledger, its ignore file, and all tracked/non-ignored bundle changes (including pre-existing agent-owned knowledge edits). Shared/symlinked paths resolve to the same state.
+- **Complete means validated and committed.** The last step re-verifies and performs the local commit, then returns its hash. Existing Git identity, signing, and hooks are honored. Unrelated files and staged changes outside an embedded bundle are excluded; locks and temporary files are never included. No push is made.
+- A missing ledger means **unassessed**, including fresh bundles. The first step inspects compatibility; it does not manufacture concepts or convert the corpus format.
+- The first step checks stable OKF **>=0.4.3 <0.5.0** and the zero-findings validation contract. New code bindings, governance edits, AAG and Hub sync are optional—not required migrations.
+- Reading instructions is not completion; the agent cannot advance by merely asserting success. Structural checks cannot prove semantic correctness or that the model understood the prose—policy decisions still require human review.
+
+### Status and interruption
+
+```text
+/memory-upgrade status   # read-only plan/progress; no model turn
+/memory-upgrade cancel   # release this session's review; keep completed steps
+/memory-upgrade unlock   # confirm recovery of a stopped local process's lock
+```
+
+Re-run `/memory-upgrade` after restart/reload to resume the first unfinished step. Within an approved session, `memory_upgrade(action="next")` recovers instructions after compaction.
+
+If all step checks passed but Git finalization failed, the notice remains **final commit pending**. Fix the reported repository/identity/signing/hook/validation issue, then use `/memory-upgrade` or `memory_upgrade(action="finalize")` in the approved session. Retrying re-verifies without rewriting step timestamps or replaying the review. Repository creation requires separate setup approval; author identity is never fabricated. Failed attempts may leave bundle files staged; unrelated staging is preserved.
+
+Old uncommitted ledgers are detected on reload and require just this finalization, not a repeated review. Git HEAD must contain the ledger and ignore file; the hash is not written back into the ledger, avoiding an endless second-commit requirement. Normal later corpus edits do not reopen an already committed upgrade. An ignored local `finalize-pending` marker retains interrupted or failed finalization, including changes made by hooks.
+
+The lock covers review and finalization. Shutdown/session switching releases it; a crash may leave a lock requiring explicit recovery. Live local owners and foreign-host locks are not automatically displaced. The lock is advisory: other agents, shells, or humans can still edit files, and user Git hooks still execute. Cancel does not undo edits, staging, or commits. No automatic push, rollback, or package download occurs.
+
+The runner rejects corrupt/out-of-order/newer state rather than overwriting it. Do not delete the ledger to bypass an upgrade or downgrade; inspect it with a compatible package. If a confirmed dead remote owner left a lock, coordinate with that owner before removing only the lock manually.
+
+Normal read tools remain available during this compatible review; unsupported path-search calls fail explicitly and unsupported validators cannot report `ok:true`. This is not a filesystem sandbox or a global coding lock.
+
+In print/JSON mode, pending status is supplied to the model and available through `memory_upgrade(action="status")`. The interactive command still requires confirmation; a trusted host can instead request an unattended review through the managed interface below. RPC receives supported notifications/dialogs, not TUI widgets.
+
+## Autonomous hosts (Yono and similar harnesses)
+
+A host adapter can use the versioned `pi.events` protocol to inspect and run upgrades without typing a slash command or answering a dialog. **No persona configuration or step allowlist is needed:** a host `run` request approves every pending step of the installed package and the required final local commit.
+
+- First inspect `okf:setup:ready` / setup `status`. If needed, authorize a bound setup `run` to create the bundle/Git worktree without a model turn. See [setup protocol](docs/setup.md).
+- Once setup is ready, wait for `okf:upgrade:ready`, query fresh upgrade `status`, then send a separate `run` bound to that session, canonical bundle, and package version. The two protocols have independent session bindings.
+- The extension waits for idle/no queued messages/no unresolved tools. Hosts can hold the slot for other maintenance and observe its active state to defer hygiene.
+- The agent gets the same ordered guides, with host consent for necessary scoped repairs. Unknown policy/factual decisions become an explicit `block`, not an unattended console question.
+- Completion is reported structurally **after the agent settles**, with the verified commit hash. Failures stay pending; there is no autonomous retry loop or process kill.
+- Version-only updates re-verify and commit an adoption receipt without repeating old guides. Already-current requests are no-ops. Yono owns deploying the newest package and restarting/reloading pi; this package never downloads updates itself.
+
+See **[Managed upgrade protocol](docs/managed-upgrades.md)** for request/response types, lifecycle, maintenance coordination, deadlines, and host-attested crash recovery. **[Example automatic host](examples/managed-host.ts)** shows setup followed by startup/version-change upgrade triggering and is not auto-loaded by the package. This is an in-process cooperative integration, not a new security boundary or authoritative infrastructure audit.
+
+## Local copy installation
 
 ```bash
-git clone https://github.com/okf-memory/okf-agent-memory && cd okf-agent-memory && make build
-cp bin/okf /path/to/pi-okf-agent-memory/bin/
+./install.sh /path/to/project [knowledge-dir]
 ```
 
-## Design notes
+Copies the extension to `.pi/extensions/okf-memory/` and both skills to `.pi/skills/`. It replaces the recognized legacy `okf-memory.ts` entry point to avoid duplicate registrations. Explicit installation overwrites package-owned extension/skill files; keep custom instructions elsewhere. All bundles are left unchanged by installation. `/reload` offers the shared setup flow (or use `/memory-setup` / host setup); `/memory-upgrade` separately establishes the committed baseline. The installer no longer has a separate shell bootstrap that creates identity/commits.
 
-- **CLI over MCP.** pi has no built-in MCP support; the `okf` CLI is local, zero-dependency, sub-5ms — an MCP hop adds nothing.
-- **Extension over skill-only.** Skills are advisory; the extension makes read-side tools always available and makes resume-injection + validation deterministic.
-- **Why-only corpus.** The skill's first rule: git records *what*, runbooks record *how*, deploy logs record *when* — `knowledge/` records only *why*. See `skills/okf-memory/SKILL.md`.
+## Development
+
+```bash
+npm test
+npm run test:rpc
+node scripts/update-okf.mjs v0.4.3 --static-linux
+```
+
+Tests locate pi locally or via `npm root --global`; set `PI_TEST_PACKAGE_DIR` to an installed pi package directory to override. They use pi's jiti loader, temporary bundles, mocked UI/hosts, and real CLI/Git calls. The RPC test also launches real pi with isolated settings/offline mode, declines the interactive dialog, then exercises unattended host finalization and its Git receipt. No model calls. An optional read-only `/workspace/knowledge` check skips when absent.
+
+Vendoring verifies all four release assets against upstream SHA-256 checksums before replacing binaries. `--static-linux` (maintainer Go/Git required) rebuilds Linux amd64 from the release tag with CGO disabled: upstream's v0.4.3 asset otherwise requires glibc. The script rejects dynamically linked Linux artifacts. `bin/UPSTREAM.json` distinguishes release checksums from the source-built artifact and records its commit/toolchain/flags. Checksums are not an independent release signature. Keep `bin/NOTICES.md` current when dependencies change. `bin/okf` remains a legacy copy of Linux amd64. No runtime builds or downloads occur.
+
+- `index.ts`: native tools, session context, commands.
+- `lib/setup.ts` / `lib/setup-extension.ts`: deterministic Git-backed setup, interactive consent, and explicit host setup protocol.
+- `lib/okf.ts`: executable/bundle resolution and structured CLI validation.
+- `lib/upgrades.ts`: ordered registry, durable ledger, advisory lock, verifiers and finalization.
+- `lib/git.ts`: read-only commit proof and bundle-scoped commits preserving unrelated staging.
+- `lib/upgrade-extension.ts`: shared interactive/host workflow and consent handling.
+- `lib/managed-upgrades.ts`: host protocol, idle scheduling, maintenance coordination and outcomes.
+- `skills/okf-memory-upgrade/`: portable upgrade workflow and historical steps.
+
+Keep step IDs stable and append new steps only for actual upgrade work, not every release. Retain old guides and keep their verifiers compatible with the newest supported binary. Keep verifiers read-only and repeatable: finalization rechecks them before and after the commit. Test fresh/legacy/provisioned setup, broken Git metadata, stale consent, skipped releases, commit failures/retries, unrelated staging, cancellation, concurrent sessions, and missing/corrupt state. Never infer completion from a release number or a notice being dismissed.
+
+CLI integration remains deliberate: local read tools and explicit upgrade control need no MCP server. Upstream's broader workflow and sync features are optional; this package retains its narrower why-only memory policy.

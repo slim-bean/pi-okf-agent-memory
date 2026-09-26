@@ -1,0 +1,34 @@
+{
+  "repository": "https://github.com/okf-memory/okf-agent-memory",
+  "version": "v0.4.3",
+  "checksumsURL": "https://github.com/okf-memory/okf-agent-memory/releases/download/v0.4.3/checksums.txt",
+  "releaseChecksums": {
+    "okf-darwin-amd64": "efc09e7ccfc3da3b73c0bc54b07a5b60b3180747ab29a5aec8cd2ffc8b36bbdb",
+    "okf-darwin-arm64": "be6ae1e0038a5cef0482a5d7b512d777d76308ba0d86bfd19bf6cd85233f882f",
+    "okf-linux-amd64": "485761b084069b1299fa4a480df96cdac28894fc126bfffe20afd70731d7f037",
+    "okf-linux-arm64": "c7ba349f3ff13e2cddf859ec69a673c9ff35cd4d093054cd1bf0b4e3f97cdd4a"
+  },
+  "sourceBuilds": {
+    "okf-linux-amd64": {
+      "commit": "68bddd551bd8e09be80f31b08f08ceeb50bc076d",
+      "toolchain": "go version go1.26.4 darwin/arm64",
+      "CGO_ENABLED": "0",
+      "GOOS": "linux",
+      "GOARCH": "amd64",
+      "GOAMD64": "v1",
+      "flags": [
+        "-trimpath",
+        "-ldflags",
+        "-s -w -X main.Version=v0.4.3 -X main.Commit=68bddd5"
+      ],
+      "package": "./cmd/okf"
+    }
+  },
+  "binaries": {
+    "okf-darwin-amd64": "efc09e7ccfc3da3b73c0bc54b07a5b60b3180747ab29a5aec8cd2ffc8b36bbdb",
+    "okf-darwin-arm64": "be6ae1e0038a5cef0482a5d7b512d777d76308ba0d86bfd19bf6cd85233f882f",
+    "okf-linux-amd64": "229fd0320df9a66903c54ee87f1c52cf2e031b1fa08ab5e06fa82cb54cf6bd9d",
+    "okf-linux-arm64": "c7ba349f3ff13e2cddf859ec69a673c9ff35cd4d093054cd1bf0b4e3f97cdd4a",
+    "okf": "229fd0320df9a66903c54ee87f1c52cf2e031b1fa08ab5e06fa82cb54cf6bd9d"
+  }
+}

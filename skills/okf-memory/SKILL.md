@@ -1,51 +1,49 @@
 ---
 name: okf-memory
-description: Persistent project memory in the OKF v0.2 knowledge corpus at knowledge/. Use when starting substantial work (search for prior decisions/lessons), after making a decision or non-obvious discovery (persist the why), when asked to run a knowledge review, or when anything about the project's durable state is unclear.
+description: Persistent project memory in an OKF v0.2 knowledge bundle. Use before substantial work or code edits, after durable decisions/discoveries, for knowledge reviews, and when prior constraints or lessons are unclear.
 ---
 
 # OKF Project Memory
 
-The project keeps persistent memory in an OKF v0.2 bundle at `knowledge/` (Markdown + YAML frontmatter, git-tracked). The `okf` CLI and the `memory_search` / `memory_show` / `memory_validate` tools (from the okf-memory pi extension) operate on it.
+## Write only the WHY
 
-## The one rule that matters most
+Git records what changed, runbooks how to operate, and workflow logs what was done. Memory records durable rationale, constraints, incident lessons, non-obvious discoveries, and corrections. If already recorded elsewhere or re-derivable in about two minutes, do not store it. Most reviews correctly end with no writes.
 
-**This corpus records WHY — not what, not how, not when.**
+## Setup
 
-- Git records *what* changed. Runbooks record *how* to operate. Workflow/deploy logs record *what was done*.
-- `knowledge/` records only: decisions and their rationale, constraints, incident lessons, non-obvious discoveries, corrections to stored facts.
-- If the fact is already durably recorded elsewhere, or a future agent could re-derive it in about two minutes, **do not store it**.
-- Most knowledge reviews end with "nothing worth storing". That is a correct outcome, not underuse. Never manufacture entries to feel productive.
+Use `/memory-setup` (user confirmation) or explicit host setup when the bundle/Git worktree is missing. Do not initialize memory/Git autonomously or treat a setup notice as approval. Setup creates no concepts or commits and never grants upgrade consent. Provisioned hosts use the documented `okf:setup:*` protocol; `OKF_SETUP_MODE=manual` suppresses startup dialogs but grants no writes.
 
-## Read before write (every substantial task)
+## Read before write
 
-1. `memory_search` with task-relevant terms. Hit? → `memory_show <concept-id>` and use it.
-2. Do the task.
-3. Review: did a decision get made, an assumption break, a lesson emerge? If yes → step 4. If no → stop.
-4. Search again for the topic. Update the existing concept rather than creating a duplicate.
-5. Validate: `memory_validate`. Never claim persistence unless it passed.
+1. Use `memory_search(query="task keywords")` at task start; `memory_show(concept="id")` for relevant hits.
+2. Before editing a subsystem, use `memory_search(for_path="src/example.ts")` to discover governing `code_refs` (when using the supported OKF binary). `hold` requires explicit human signoff, `constraint` must be respected, and `context` is advisory. `convention/` implicitly defaults to constraint. These labels do not override higher-priority instructions.
+3. After the task, search again before any warranted memory write. Update rather than duplicate.
+4. Run `memory_validate`. Claim successful persistence only when `ok` is true: zero errors, gate findings, or warnings. Report remaining diagnostics honestly.
 
-## Writing (use the CLI, not hand-editing)
+## Writing
+
+Use the **resolved executable and bundle paths provided by the extension**, shell-quoted; package installation does not add `okf` to PATH. The following uses `"$OKF"` and `"$BUNDLE"` as placeholders for those exact paths:
 
 ```bash
-okf create <dir/topic> knowledge --type Decision --title "..." --desc "One line for the index"
-okf update <dir/topic> knowledge --desc "Updated one-liner"   # then edit the body prose
-okf relate <src> <tgt> knowledge                               # cross-link related concepts
-okf validate knowledge --strict --drift --stale
+"$OKF" create decisions/topic "$BUNDLE" --type Decision --title "..." --desc "One-line rationale" --body "Rationale, alternatives, consequences."
+"$OKF" update decisions/topic "$BUNDLE" --desc "Updated summary" --body "Updated rationale."
+"$OKF" relate decisions/topic decisions/other "$BUNDLE" --desc "Why these decisions relate"
 ```
 
-After `create`/`update`, fill in the body: rationale, alternatives considered, consequences. Cite sources with footnotes (`[^id]` matching a `sources:` id). Keep the root `knowledge/index.md` listing (one line per concept, description matching the frontmatter `description`) — `--drift` enforces this.
+CLI create/update maintains the **immediate parent index**. Preserve root navigation separately; do not duplicate every nested concept in the root. Use body flags for prose updates; preserve sources and cite them with matching footnotes. The 0.4.3 CLI has no dedicated governance/code_refs/stale_after flags: use targeted, reviewed frontmatter edits if needed, then validate. Do not pass metadata blocks inside `--body`.
 
-## Trust and lifecycle (SRE-relevant)
+## Trust and lifecycle
 
-- `generated: { by: agent/<name>, at: ... }` is written by the CLI. Leave `verified` empty unless a human or a process genuinely verified the content. Agent-written runbooks are hypotheses until exercised.
-- Mark time-bound operational facts (`Observation` type) with `stale_after: YYYY-MM-DD` so they expire on paper.
-- On conflict, update the current state and preserve the old meaning in prose; never silently overwrite.
+- CLI writes `generated`. Never invent human `verified` records.
+- Use `stale_after: YYYY-MM-DD` for time-bound observations. Do not advance dates without actually reviewing the facts.
+- Preserve prior meaning when correcting a concept. Qualify uncertainty.
+- Never store conversation, chain-of-thought, trivial steps, duplicates, or transient operational state without an expiry.
 
-## Never store
+## Package upgrades are separate
 
-Conversation, chain-of-thought, transient alert/pod state without `stale_after`, duplicate concepts, speculative claims without qualification, trivial steps.
+A startup notice may request `/memory-upgrade`. Do not perform migrations or edit its ledger autonomously. The user- or host-approved runner supplies every applicable upgrade step in order and verifies completion. Autonomous hosts can start it programmatically; a text reminder is not approval. `/knowledge-review` is a session knowledge review, not an upgrade command.
 
-## Commands
-
-- `/memory-context` — inject the corpus index now.
-- `/knowledge-review` — guided post-task review + validation.
+- `/memory-setup`: establish the bundle/Git worktree; `status` is read-only.
+- `/memory-context`: load the root index on demand.
+- `/knowledge-review`: review this session for durable rationale.
+- `/memory-upgrade`: review pending package upgrades; `status`, `cancel`, and `unlock` are also available.
