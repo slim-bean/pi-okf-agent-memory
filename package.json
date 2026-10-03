@@ -3,7 +3,7 @@
   "version": "0.2.0",
   "description": "Git-native project memory for pi: text/path search, strict validation, session context, and ordered agent-assisted upgrades.",
   "scripts": {
-    "test": "node --test test/smoke.mjs test/managed.mjs test/setup.mjs",
+    "test": "node --test test/smoke.mjs test/managed.mjs test/setup.mjs test/maintenance.mjs",
     "test:rpc": "node test/rpc.mjs"
   },
   "license": "MIT",

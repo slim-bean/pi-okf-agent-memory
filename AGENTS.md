@@ -9,6 +9,10 @@ pi-okf-agent-memory integrates a local OKF v0.2 corpus with pi. Read `README.md`
 - `lib/setup.ts` / `lib/setup-extension.ts`: Git-backed setup, startup confirmation and explicit `okf:setup:*` host protocol. See `docs/setup.md` for provisioning/Yono; setup never grants upgrade consent.
 - `lib/upgrades.ts`: append-only upgrade registry, bundle-scoped ledger, review lock and required finalization.
 - `lib/git.ts`: commit proof and scoped Git operations; preserve staging outside the bundle.
+- `lib/maintenance.ts` / `lib/maintenance-git.ts`: optional snapshot review/upgrade adapter;
+  see `docs/maintenance.md`. Tool-free model proposals, scoped CLI writes, validation,
+  automatic commits, separately requested non-force upstream pushes. Never launch an
+  authenticated pi in tests; fake registries plus real temporary CLI/Git fixtures only.
 - `lib/upgrade-extension.ts`: shared interactive/host workflow, notices and step delivery.
 - `lib/managed-upgrades.ts`: versioned in-process host protocol, idle scheduling and lifecycle. See `docs/managed-upgrades.md`; `examples/managed-host.ts` is an explicitly loaded example, never a default package resource.
 - `skills/okf-memory/`: why-only budget and normal memory workflow.
@@ -23,7 +27,8 @@ pi-okf-agent-memory integrates a local OKF v0.2 corpus with pi. Read `README.md`
 - Startup/status inspection never mutates or starts an agent turn. TUI startup can offer setup; writes need confirmed session/plan-bound consent or explicit host setup. Never prompt unsolicited in RPC/headless; `OKF_SETUP_MODE=manual` also suppresses provisioned TUI prompts. Setup and upgrade consent are separate. Check both on reload.
 - Setup preserves existing content/ledgers, reuses enclosing worktrees, initializes Git only inside a bundle with no repository, and refuses broken metadata/nonempty non-bundles. No identity, commits, remotes or pushes. Host setup requires idle/no maintenance and is synchronous; no hidden retry loop or automatic stale-lock removal.
 - Skills explain; the runner enforces ordering and deterministic verification. Reading a skill or dismissing a notice never marks completion.
-- Persist progress/adopted package version per canonical bundle. Consent is interactive or an explicit trusted host request bound to the current session/bundle/version; never infer it from prose. Host requests cover all installed pending steps and the local commit, with no allowlist/persona config. No pushes, fabricated identity/verification, or hook bypass.
+- Persist progress/adopted package version per canonical bundle. Consent is interactive or an explicit trusted host request bound to the current session/bundle/version; never infer it from prose. Host requests cover all installed pending steps and the local commit, with no allowlist/persona config. Upgrade host consent alone never grants push authority. Separately requested maintenance
+  pushes require an existing upstream. No fabricated identity/verification or hook bypass.
 - Managed work waits for safe idle and maintenance holds. Terminal host success follows verified commit AND settle; deadlines/cancellation never unlock a running writer. Recovery requires exact lock/runtime correlation plus explicit host confirmation of old-runtime termination; it is not proof or a security boundary.
 - Final success requires validation and a verified Git commit, not just a local ledger. Failed finalization stays pending/retryable without rewriting step records. Never include transient files or unrelated outer-repository staging.
 - Step IDs/order are immutable. Retain historical guides/verifiers when releases are skipped. New steps must work with the current binary and be safe to retry. Verifiers are read-only and run again before and after finalization. Unknown/corrupt ledger state fails closed.

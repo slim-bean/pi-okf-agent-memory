@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { binaryVersion, requireCurrentContract, resolveKnowledgeDir, resolveOkfBin as locateBinary, runOkf, supportsCurrentContract, validateBundle } from "./lib/okf.js";
 import { registerUpgrades } from "./lib/upgrade-extension.js";
 import { registerSetup } from "./lib/setup-extension.js";
+import { registerMemoryMaintenance } from "./lib/maintenance.js";
 
 const EXT_DIR = dirname(fileURLToPath(import.meta.url));
 const PACKAGE_VERSION: string = JSON.parse(readFileSync(join(EXT_DIR, "package.json"), "utf8")).version;
@@ -45,6 +46,9 @@ export default function okfMemoryExtension(pi: ExtensionAPI) {
 		busy: () => upgrades?.busy ?? false, onReady: ctx => { upgrades?.refresh(ctx); } });
 	upgrades = registerUpgrades(pi, { skillsDir: SKILLS_DIR, packageVersion: PACKAGE_VERSION, getBinary: requireBin, getBundle: resolveKnowledgeDir,
 		setupBusy: () => setup.active, requireSetup: setup.requireReady });
+	const maintenance = registerMemoryMaintenance(pi, { packageVersion: PACKAGE_VERSION, skillsDir: SKILLS_DIR,
+		getBinary: requireBin, busy: () => setup.active || (upgrades?.busy ?? false) });
+	pi.on("session_shutdown", async () => { await maintenance.stop(); });
 
 	pi.registerTool({
 		name: "memory_search",

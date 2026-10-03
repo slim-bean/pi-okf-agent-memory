@@ -106,6 +106,18 @@ A host adapter can use the versioned `pi.events` protocol to inspect and run upg
 
 See **[Managed upgrade protocol](docs/managed-upgrades.md)** for request/response types, lifecycle, maintenance coordination, deadlines, and host-attested crash recovery. **[Example automatic host](examples/managed-host.ts)** shows setup followed by startup/version-change upgrade triggering and is not auto-loaded by the package. This is an in-process cooperative integration, not a new security boundary or authoritative infrastructure audit.
 
+## Optional idle session maintenance
+
+Install `pi-session-maintenance` separately to schedule autonomous all-branch
+session reviews and installed-package upgrades. The coordinator discovers this
+package's `okf:maintenance:v1` adapter; normal OKF startup still starts no work.
+Review calls use the existing model registry, not authenticated pi subprocesses.
+Warranted concept addenda are applied through the CLI, validated, and **committed
+automatically**. Configured upstream pushes are separate retryable operations.
+Missing bundles/Git identity are diagnosed, never fabricated. See
+[Unattended maintenance protocol](docs/maintenance.md) for authority, checkpoints,
+limits, cancellation, bundle locking and the no-human-approval normal path.
+
 ## Local copy installation
 
 ```bash
@@ -133,6 +145,8 @@ Vendoring verifies all four release assets against upstream SHA-256 checksums be
 - `lib/git.ts`: read-only commit proof and bundle-scoped commits preserving unrelated staging.
 - `lib/upgrade-extension.ts`: shared interactive/host workflow and consent handling.
 - `lib/managed-upgrades.ts`: host protocol, idle scheduling, maintenance coordination and outcomes.
+- `lib/maintenance.ts` / `lib/maintenance-git.ts`: optional host-driven tool-free
+  snapshot reviews/upgrades, automatic bundle commits, and configured upstream pushes.
 - `skills/okf-memory-upgrade/`: portable upgrade workflow and historical steps.
 
 Keep step IDs stable and append new steps only for actual upgrade work, not every release. Retain old guides and keep their verifiers compatible with the newest supported binary. Keep verifiers read-only and repeatable: finalization rechecks them before and after the commit. Test fresh/legacy/provisioned setup, broken Git metadata, stale consent, skipped releases, commit failures/retries, unrelated staging, cancellation, concurrent sessions, and missing/corrupt state. Never infer completion from a release number or a notice being dismissed.
