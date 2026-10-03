@@ -1,5 +1,5 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync, unlinkSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { UpgradeRunner } from "./upgrades.js";
@@ -154,7 +154,7 @@ export function registerMemoryMaintenance(pi: ExtensionAPI, options: { packageVe
           const maxTokens = Math.min(8192, model.maxTokens);
           if ((systemPrompt.length + content.length) / 2 + maxTokens + 1000 > model.contextWindow) throw new Error("Review exceeds configured model context; no source was truncated");
           const response = await r.context.modelRegistry.streamSimple(model, { systemPrompt, messages: [{ role: "user", content, timestamp: Date.now() }] }, {
-            signal: AbortSignal.any([signal, AbortSignal.timeout(180_000)]), maxTokens,
+            signal: AbortSignal.any([signal, AbortSignal.timeout(180_000)]), maxTokens, sessionId: randomUUID(),
           }).result();
           r.onUsage?.(response.usage);
           signal.throwIfAborted();
