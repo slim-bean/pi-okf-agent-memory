@@ -38,6 +38,9 @@ Optional environment variables:
 - `OKF_BIN`: explicit executable path (invalid overrides fail rather than silently falling back). Otherwise: host-matched package binary → legacy `bin/okf` → PATH.
 - `OKF_KNOWLEDGE_DIR`: explicit bundle path, relative to the session working directory if not absolute. Otherwise: `<cwd>/knowledge`, then an existing `/workspace/knowledge` only for `/workspace`-rooted deployments. Missing bundles are created at `<cwd>/knowledge` unless overridden.
 - `OKF_SETUP_MODE`: `prompt` (default: offer setup at TUI startup) or `manual` (no startup dialogs, including TUI). Neither value authorizes unattended writes.
+- `OKF_ORPHAN_POLICY`: `advisory` (default) or `strict`. Advisory allows independent
+  concepts without invented semantic relationships; strict requires no isolated
+  concepts (not necessarily one connected graph). Applies to validation and finalization.
 
 ## Tools and commands
 
@@ -45,7 +48,7 @@ Optional environment variables:
 |---|---|
 | `memory_search` | Text search (`query`) and code-path discovery (`for_path`), with optional `limit` (1–100) |
 | `memory_show` | Full concept body, provenance, lifecycle, governance and code references |
-| `memory_validate` | Structured diagnostics; `ok:true` requires a supported binary and **zero errors, gate findings, or warnings** |
+| `memory_validate` | Structured blocking diagnostics plus advisories; optional `orphanPolicy:"strict"` inspection |
 | `memory_upgrade` | Inspect status; retrieve/verify approved steps; finalize the required local Git commit |
 | `/memory-setup` | Confirm bundle/Git setup; `status` is read-only |
 | `/memory-context` | Queue the root index for the next turn |
@@ -53,6 +56,22 @@ Optional environment variables:
 | `/memory-upgrade` | Confirm and start/resume an ordered upgrade review |
 
 Session startup/resume/fork queues the index or an empty-corpus hint. Concept count comes from the CLI, not root-index formatting. The normal skill teaches search-before-write, governance, provenance, and the why-only write budget.
+
+## Validation policy
+
+`ok:true` still requires compatible OKF, conformance, a passing gate, and no schema,
+governance/provenance, warning/drift, broken-link or stale-data findings. Isolation
+alone is **advisory**: general-purpose knowledge can contain unrelated topics.
+The wrapper runs strict validation first, then relaxes only a proven orphan-only
+failure after confirming upstream non-strict validation passes. It never fabricates
+`gate_passed`, drops other diagnostics, invents relationships, or changes the binary.
+Raw `validation`, `strictValidation`, selected `orphanPolicy` and `advisories` remain
+inspectable. Strict inspection does not change the configured commit policy.
+
+This wrapper policy update needs no corpus conversion or rewritten upgrade timestamps.
+Existing upgrade verifiers use the current policy; saved maintenance extraction plans
+are retained and revalidated before Git finalization. Actual validation blockers remain
+pending. Index discoverability remains separate from semantic relationships.
 
 ## After an update
 
@@ -68,7 +87,7 @@ A bundle with pending work shows a startup notice and persistent status:
 - Step progress lives in `<bundle>/.pi-okf-memory/state.json`, not a session or global acknowledgment. The runner commits that ledger, its ignore file, and all tracked/non-ignored bundle changes (including pre-existing agent-owned knowledge edits). Shared/symlinked paths resolve to the same state.
 - **Complete means validated and committed.** The last step re-verifies and performs the local commit, then returns its hash. Existing Git identity, signing, and hooks are honored. Unrelated files and staged changes outside an embedded bundle are excluded; locks and temporary files are never included. No push is made.
 - A missing ledger means **unassessed**, including fresh bundles. The first step inspects compatibility; it does not manufacture concepts or convert the corpus format.
-- The first step checks stable OKF **>=0.4.3 <0.5.0** and the zero-findings validation contract. New code bindings, governance edits, AAG and Hub sync are optional—not required migrations.
+- The first step checks stable OKF **>=0.4.3 <0.5.0** and the zero-blocking-findings validation contract. New code bindings, governance edits, AAG and Hub sync are optional—not required migrations.
 - Reading instructions is not completion; the agent cannot advance by merely asserting success. Structural checks cannot prove semantic correctness or that the model understood the prose—policy decisions still require human review.
 
 ### Status and interruption

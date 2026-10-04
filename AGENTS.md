@@ -32,7 +32,8 @@ pi-okf-agent-memory integrates a local OKF v0.2 corpus with pi. Read `README.md`
 - Managed work waits for safe idle and maintenance holds. Terminal host success follows verified commit AND settle; deadlines/cancellation never unlock a running writer. Recovery requires exact lock/runtime correlation plus explicit host confirmation of old-runtime termination; it is not proof or a security boundary.
 - Final success requires validation and a verified Git commit, not just a local ledger. Failed finalization stays pending/retryable without rewriting step records. Never include transient files or unrelated outer-repository staging.
 - Step IDs/order are immutable. Retain historical guides/verifiers when releases are skipped. New steps must work with the current binary and be safe to retry. Verifiers are read-only and run again before and after finalization. Unknown/corrupt ledger state fails closed.
-- Validation preserves stdout diagnostics on exit 1. Persistence and upgrade completion require no warnings as well as no structural/gate findings.
+- Validation preserves stdout diagnostics on exit 1. Isolation is advisory by default; OKF_ORPHAN_POLICY=strict opts in to requiring semantic links. Relax only a proven orphan-only failure confirmed by upstream non-strict validation. Schema, governance/provenance, warnings/drift, broken links and stale data still block persistence.
+- Maintenance emits structured deferred/blocked/error issues keyed by canonical resource. Preserve cached extraction journals across validation-policy changes; revalidate before completing/committing.
 - Advisory locks are not a security sandbox. Do not claim to prevent arbitrary shell edits or prove model comprehension.
 - pi-bundled imports belong in optional `peerDependencies` with `"*"`, never `dependencies`. Keep `pi-package` in keywords.
 - Publish a matching `vX.Y.Z` Git tag for each release; do not tag/push merely to test a working-tree change.

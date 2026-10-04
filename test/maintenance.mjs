@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync, chmodSync, unlinkSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync, chmodSync, unlinkSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -84,6 +84,26 @@ test('failed commit retries its checkpoint without another model call, and confi
     await f.run('push');assert.equal(f.calls,calls);
     assert.equal(git(remote,'rev-parse',`refs/heads/${branch}`),git(f.bundle,'rev-parse','HEAD'));
   } finally {f.close()}
+});
+
+test('orphan-only blocked plans resume validation and commit without another extraction call',async()=>{
+  const f=fixture();const previous=process.env.OKF_ORPHAN_POLICY;
+  try {
+    delete process.env.OKF_ORPHAN_POLICY;
+    await f.run('upgrade');
+    for(const id of ['independent-one','independent-two']) cli('create',id,f.bundle,'--title',id,'--desc','An independent topic.','--body','Unrelated durable rationale.');
+    process.env.OKF_ORPHAN_POLICY='strict';
+    const strictKey=(await f.run('status')).key;
+    await assert.rejects(f.run('review'),e=>e.kind==='blocked'&&e.code==='memory-validation'&&e.resource===realpathSync(f.bundle));
+    const calls=f.calls;
+    process.env.OKF_ORPHAN_POLICY='advisory';
+    assert.notEqual((await f.run('status')).key,strictKey);
+    const result=await f.run('review');
+    assert.equal(result.complete,true);assert.equal(f.calls,calls);
+    assert.equal(result.detail.advisories[0].code,'isolated-concepts');
+    assert.equal(git(f.bundle,'status','--porcelain'),'');
+    assert.doesNotMatch(readFileSync(join(f.bundle,'independent-one.md'),'utf8'),/independent-two/);
+  } finally {if(previous===undefined)delete process.env.OKF_ORPHAN_POLICY;else process.env.OKF_ORPHAN_POLICY=previous;f.close()}
 });
 
 test('malformed proposals and outside-entry references cannot mutate the bundle',async()=>{

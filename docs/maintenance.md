@@ -27,7 +27,11 @@ Requests on `okf:maintenance:v1` assign `request.result` synchronously:
 ```
 
 Results contain `available`, a policy/package/model `key`, `complete`, and optional
-`detail`. Status also reports canonical `bundle` and `upgraded`. Missing bundles
+`detail`. Status also reports canonical `bundle`, `upgraded`, and `orphanPolicy`.
+Completed review details retain validation advisories. Structured exceptions carry
+`maintenanceIssue:1`, `kind:"deferred"|"blocked"|"error"`, stable `code`, canonical
+`resource`, message and optional detail. Busy/locked bundles are waiting; validation
+is a shared bundle blocker, not one execution failure per affected session. Missing bundles
 return `available:false` without creating data. No setup, identity or remote is
 invented. Configure a Git-backed bundle first; the setup protocol is separate.
 
@@ -48,7 +52,8 @@ invented. Configure a Git-backed bundle first; the setup protocol is separate.
 - Corpus input is capped at 180,000 serialized characters and checked against
   model context; oversized input fails explicitly, never silently drops evidence.
 - Writes use the bundled OKF CLI and maintain root/immediate indexes. Validation
-  must have zero findings. Every completed section is automatically committed,
+  must have zero blocking findings; isolation is advisory unless OKF_ORPHAN_POLICY
+  is strict. No arbitrary semantic links are generated to satisfy a graph heuristic. Every completed section is automatically committed,
   including already-present agent-owned changes within the bundle, while preserving
   unrelated outer-repository staging. Hooks/signing and configured identity are honored.
 - Plans are checkpointed before writes; interrupted application detects already

@@ -18,7 +18,7 @@ Use `/memory-setup` (user confirmation) or explicit host setup when the bundle/G
 1. Use `memory_search(query="task keywords")` at task start; `memory_show(concept="id")` for relevant hits.
 2. Before editing a subsystem, use `memory_search(for_path="src/example.ts")` to discover governing `code_refs` (when using the supported OKF binary). `hold` requires explicit human signoff, `constraint` must be respected, and `context` is advisory. `convention/` implicitly defaults to constraint. These labels do not override higher-priority instructions.
 3. After the task, search again before any warranted memory write. Update rather than duplicate.
-4. Run `memory_validate`. Claim successful persistence only when `ok` is true: zero errors, gate findings, or warnings. Report remaining diagnostics honestly.
+4. Run `memory_validate`. Claim successful persistence only when `ok` is true: zero blocking errors, gate findings, warnings/drift, broken links or stale-data findings. Isolated concepts are advisory by default; independent topics do not need invented relationships. Inspect advisories without manufacturing links. `OKF_ORPHAN_POLICY=strict` requires no isolated concepts. Report remaining diagnostics honestly.
 
 ## Writing
 

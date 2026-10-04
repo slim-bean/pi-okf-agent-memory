@@ -68,19 +68,45 @@ export interface Validation {
 	[key: string]: unknown;
 }
 
-export function validateBundle(binary: string, dir: string) {
-	const result = runOkf(binary, ["validate", dir, "--strict", "--drift", "--stale", "--json"], [0, 1]);
-	const validation = JSON.parse(result.stdout) as Validation;
+export type OrphanPolicy = "advisory" | "strict";
+export interface Advisory { code: "isolated-concepts"; message: string; concepts: string[] }
+export function orphanPolicy(value = process.env.OKF_ORPHAN_POLICY ?? "advisory"): OrphanPolicy {
+	if (value !== "advisory" && value !== "strict") throw new Error("OKF_ORPHAN_POLICY must be advisory or strict");
+	return value;
+}
+function readValidation(text: string): Validation {
+	const validation = JSON.parse(text) as Validation;
 	if (!validation || typeof validation.is_conformant !== "boolean" || typeof validation.gate_passed !== "boolean" ||
 		!Number.isInteger(validation.concept_count) || validation.concept_count < 0 ||
 		![validation.errors, validation.warnings, validation.gate_findings].every(Array.isArray) ||
 		![validation.broken_links, validation.orphans].every(v => v === null || Array.isArray(v))) {
 		throw new Error("Unrecognized OKF validation JSON; refusing to infer success.");
 	}
-	// Upstream strict mode still permits quality/drift warnings. Our persistence
-	// contract is deliberately stronger: no unresolved findings of any category.
-	const ok = result.code === 0 && validation.is_conformant && validation.gate_passed &&
-		[validation.errors, validation.warnings, validation.gate_findings, validation.broken_links, validation.orphans]
-			.every(findings => !findings?.length);
-	return { ok, exitCode: result.code, validation };
+	if (validation.stale_count !== undefined && (!Number.isSafeInteger(validation.stale_count) || (validation.stale_count as number) < 0)) throw new Error("Unrecognized OKF stale_count; refusing to infer success");
+	return validation;
+}
+function noBlockingFindings(v: Validation): boolean {
+	return v.is_conformant && !v.stale_count &&
+		[v.errors, v.warnings, v.gate_findings, v.broken_links].every(findings => !findings?.length);
+}
+export function validateBundle(binary: string, dir: string, policy: OrphanPolicy = orphanPolicy()) {
+	policy = orphanPolicy(policy);
+	const args = ["validate", dir, "--drift", "--stale", "--json"];
+	const strict = runOkf(binary, [...args, "--strict"], [0, 1]);
+	const strictValidation = readValidation(strict.stdout);
+	let result = strict;
+	let validation = strictValidation;
+	// Relax ONLY the proven orphan-only case, never an arbitrary failed gate.
+	// Confirm with upstream non-strict validation rather than fabricating gate_passed.
+	if (policy === "advisory" && strict.code === 1 && !strictValidation.gate_passed &&
+		noBlockingFindings(strictValidation) && strictValidation.orphans?.length) {
+		result = runOkf(binary, args, [0, 1]);
+		validation = readValidation(result.stdout);
+	}
+	const ok = result.code === 0 && validation.gate_passed && noBlockingFindings(validation) &&
+		(policy === "advisory" || !validation.orphans?.length);
+	const advisories: Advisory[] = policy === "advisory" && validation.orphans?.length
+		? [{ code: "isolated-concepts", message: `${validation.orphans.length} concept(s) have no semantic relationships (advisory). Independent topics are allowed; do not invent links to silence this observation.`, concepts: validation.orphans }]
+		: [];
+	return { ok, exitCode: result.code, validation, orphanPolicy: policy, advisories, strictValidation };
 }

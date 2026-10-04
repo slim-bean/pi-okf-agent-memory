@@ -93,14 +93,14 @@ export default function okfMemoryExtension(pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "memory_validate",
 		label: "Memory Validate",
-		description: "Validate conformance, connectivity, trust, index/code-reference drift and staleness. ok:true requires a supported binary and zero errors, gate findings or warnings. Never claim successful persistence unless ok is true. Failed checks return their diagnostics.",
-		parameters: Type.Object({}),
-		async execute(_id, _params, _signal, _onUpdate, ctx) {
+		description: "Validate conformance, trust, index/code-reference drift and staleness. ok:true requires a supported binary and zero blocking findings. Isolated concepts are advisory by default; orphanPolicy:strict requires semantic relationships. Never invent links to pass validation. Failed checks and advisories remain inspectable.",
+		parameters: Type.Object({ orphanPolicy: Type.Optional(Type.Union([Type.Literal("advisory"), Type.Literal("strict")])) }),
+		async execute(_id, params, _signal, _onUpdate, ctx) {
 			const dir = requireKnowledge(ctx.cwd);
 			const binary = requireBin();
 			const version = binaryVersion(binary);
 			const compatible = supportsCurrentContract(version);
-			const result = validateBundle(binary, dir);
+			const result = validateBundle(binary, dir, params.orphanPolicy);
 			const details = { ...result, ok: compatible && result.ok, compatible, version, dir };
 			return { content: [{ type: "text", text: fit(JSON.stringify(details, null, 2)) }], details };
 		},
