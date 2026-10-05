@@ -31,7 +31,11 @@ Results contain `available`, a policy/package/model `key`, `complete`, and optio
 Completed review details retain validation advisories. Structured exceptions carry
 `maintenanceIssue:1`, `kind:"deferred"|"blocked"|"error"`, stable `code`, canonical
 `resource`, message and optional detail. Busy/locked bundles are waiting; validation
-is a shared bundle blocker, not one execution failure per affected session. Missing bundles
+is a shared bundle blocker, not one execution failure per affected session. Git
+issues use stable resource-scoped codes (`git-identity`, `git-upstream`, `git-auth`,
+`git-conflict`, `git-signing`, `git-push-rejected`, `git-push`, `git-finalization`)
+so the coordinator can explain the actual prerequisite and next action instead
+of recommending an ineffective blind retry. No repair or security bypass is performed. Missing bundles
 return `available:false` without creating data. No setup, identity or remote is
 invented. Configure a Git-backed bundle first; the setup protocol is separate.
 

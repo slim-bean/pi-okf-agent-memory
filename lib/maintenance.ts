@@ -7,11 +7,8 @@ import { requireCurrentContract, resolveKnowledgeDir, runOkf, validateBundle, or
 import { commitKnowledge, pushKnowledge } from "./maintenance-git.js";
 
 const POLICY = "1"; // extraction checkpoint version: validation policy must not discard saved plans
-export class MemoryMaintenanceIssue extends Error {
-  readonly maintenanceIssue = 1;
-  constructor(readonly kind: "deferred" | "blocked" | "error", readonly code: string,
-    readonly resource: string, message: string, readonly detail?: unknown) { super(message); }
-}
+export { MemoryMaintenanceIssue } from "./maintenance-issue.js";
+import { MemoryMaintenanceIssue } from "./maintenance-issue.js";
 function validated(binary: string, bundle: string) {
   const result = validateBundle(binary, bundle);
   if (!result.ok) throw new MemoryMaintenanceIssue("blocked", "memory-validation", bundle,

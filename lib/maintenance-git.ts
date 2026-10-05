@@ -2,9 +2,14 @@ import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { git, gitEnv } from "./git.js";
 import { spawn } from "node:child_process";
+import { gitIssue, MemoryMaintenanceIssue } from "./maintenance-issue.js";
 
 /** Automatic, bundle-only commit. Preserve unrelated outer-repository staging. */
 export function commitKnowledge(bundle: string, message: string): string | null {
+  try { return commitKnowledgeImpl(bundle, message); }
+  catch (error) { throw gitIssue(bundle, error, "commit"); }
+}
+function commitKnowledgeImpl(bundle: string, message: string): string | null {
   for (const marker of ["MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "rebase-merge", "rebase-apply", "sequencer"]) {
     if (existsSync(resolve(bundle, git(bundle, ["rev-parse", "--git-path", marker]).stdout.trim()))) throw new Error(`Git ${marker} in progress; maintenance deferred`);
   }
@@ -25,10 +30,15 @@ export function commitKnowledge(bundle: string, message: string): string | null 
 
 /** Explicit configured upstream only. No force, auto-merge/rebase, auth prompt or new remote. */
 export async function pushKnowledge(bundle: string, signal?: AbortSignal): Promise<void> {
-  const branch = git(bundle, ["symbolic-ref", "--quiet", "--short", "HEAD"]).stdout.trim();
-  const remote = git(bundle, ["config", "--get", `branch.${branch}.remote`]).stdout.trim();
-  const ref = git(bundle, ["config", "--get", `branch.${branch}.merge`]).stdout.trim();
-  if (!remote || remote === "." || remote.startsWith("-") || !ref.startsWith("refs/heads/")) throw new Error("push enabled but no valid upstream remote/branch is configured");
+  try { await pushKnowledgeImpl(bundle, signal); }
+  catch (error) { signal?.throwIfAborted(); throw gitIssue(bundle, error, "push"); }
+}
+async function pushKnowledgeImpl(bundle: string, signal?: AbortSignal): Promise<void> {
+  const branch = git(bundle, ["symbolic-ref", "--quiet", "--short", "HEAD"], [0, 1]).stdout.trim();
+  if (!branch) throw new MemoryMaintenanceIssue("blocked", "git-upstream", bundle, "Knowledge push requires an attached branch with a configured upstream; HEAD is detached.");
+  const remote = git(bundle, ["config", "--get", `branch.${branch}.remote`], [0, 1]).stdout.trim();
+  const ref = git(bundle, ["config", "--get", `branch.${branch}.merge`], [0, 1]).stdout.trim();
+  if (!remote || remote === "." || remote.startsWith("-") || !ref.startsWith("refs/heads/")) throw new MemoryMaintenanceIssue("blocked", "git-upstream", bundle, "push enabled but no valid upstream remote/branch is configured");
   signal?.throwIfAborted();
   await new Promise<void>((resolve, reject) => {
     const child = spawn("git", ["-C", bundle, "push", "--porcelain", remote, `HEAD:${ref}`], {

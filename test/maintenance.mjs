@@ -49,7 +49,7 @@ test('capability is read-only; unattended upgrades and no-change review commit w
     const reviewed=await f.run('review'); assert.equal(reviewed.complete,true);
     const paid=f.calls; await f.run('review'); assert.equal(f.calls,paid);
     assert.equal(git(f.bundle,'status','--porcelain'),''); assert.equal(f.h.prompts.length,0);
-    await assert.rejects(f.run('push'),/git config failed|upstream/);
+    await assert.rejects(f.run('push'),e=>e.kind==='blocked'&&e.code==='git-upstream'&&/upstream/.test(e.message));
   } finally {f.close()}
 });
 
@@ -104,6 +104,19 @@ test('orphan-only blocked plans resume validation and commit without another ext
     assert.equal(git(f.bundle,'status','--porcelain'),'');
     assert.doesNotMatch(readFileSync(join(f.bundle,'independent-one.md'),'utf8'),/independent-two/);
   } finally {if(previous===undefined)delete process.env.OKF_ORPHAN_POLICY;else process.env.OKF_ORPHAN_POLICY=previous;f.close()}
+});
+
+test('Git diagnostics provide stable codes for specific next-step guidance',async()=>{
+  const {gitIssue}=await jiti.import(join(root,'lib/maintenance-issue.ts'));
+  for(const [text,code] of [
+    ['Author identity unknown','git-identity'],['Unmerged Git index; maintenance deferred','git-conflict'],
+    ['Permission denied (publickey)','git-auth'],['gpg failed to sign the data','git-signing'],
+    ['[rejected] main -> main (non-fast-forward)','git-push-rejected'],
+  ]) {
+    const issue=gitIssue('/knowledge',new Error(text),'push');
+    assert.equal(issue.code,code);assert.equal(issue.kind,'blocked');assert.equal(issue.resource,'/knowledge');
+  }
+  assert.equal(gitIssue('/knowledge',new Error('network unreachable'),'push').code,'git-push');
 });
 
 test('malformed proposals and outside-entry references cannot mutate the bundle',async()=>{

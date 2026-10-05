@@ -11,7 +11,8 @@ pi-okf-agent-memory integrates a local OKF v0.2 corpus with pi. Read `README.md`
 - `lib/git.ts`: commit proof and scoped Git operations; preserve staging outside the bundle.
 - `lib/maintenance.ts` / `lib/maintenance-git.ts`: optional snapshot review/upgrade adapter;
   see `docs/maintenance.md`. Tool-free model proposals, scoped CLI writes, validation,
-  automatic commits, separately requested non-force upstream pushes. Never launch an
+  automatic commits, separately requested non-force upstream pushes. `maintenance-issue.ts`
+  exposes stable Git/validation prerequisite codes for actionable coordinator messaging. Never launch an
   authenticated pi in tests; fake registries plus real temporary CLI/Git fixtures only.
 - `lib/upgrade-extension.ts`: shared interactive/host workflow, notices and step delivery.
 - `lib/managed-upgrades.ts`: versioned in-process host protocol, idle scheduling and lifecycle. See `docs/managed-upgrades.md`; `examples/managed-host.ts` is an explicitly loaded example, never a default package resource.
