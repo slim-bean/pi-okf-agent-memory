@@ -25,6 +25,8 @@ export interface MemoryMaintenanceRequest {
   protocol: 1; operation: "status" | "upgrade" | "review" | "push";
   context: ExtensionContext; cwd: string; source?: Source; workDir: string; model?: string; push?: boolean;
   signal?: AbortSignal; assertSource?: () => void; onUsage?: (usage: any) => void; onProgress?: (text: string) => void;
+  onModelEvent?: (event: any) => void;
+  onEvent?: (type: string, detail?: unknown) => void;
   result?: Promise<unknown>;
 }
 function corpus(bundle: string): Record<string, string> {
@@ -116,12 +118,16 @@ function apply(binary: string, bundle: string, plan: Journal) {
   }
 }
 
-export function registerMemoryMaintenance(pi: ExtensionAPI, options: { packageVersion: string; skillsDir: string; getBinary(): string; busy(): boolean }) {
+export function registerMemoryMaintenance(pi: ExtensionAPI, options: { packageVersion: string; skillsDir: string; getBinary(cwd?: string): string; busy(): boolean }) {
   let active: AbortController | undefined;
   let pending: Promise<unknown> | undefined;
   const key = (model: string) => `${POLICY}:${options.packageVersion}:${model}:validation-2-${orphanPolicy()}`;
   const cancel = () => active?.abort(new Error("Foreground activity interrupted memory maintenance"));
-  pi.on("input", cancel); pi.on("agent_start", cancel);
+  pi.on("input", event => {
+    // Optional host inspection/admission commands are passive; all ordinary input still wins.
+    if (!event?.text || !/^\/maintenance(?:[ \t]+(?:watch|history|logs|status|help|run|retry)(?:[ \t]+[^\r\n]*)?)?[ \t]*$/.test(event.text)) cancel();
+  });
+  pi.on("agent_start", cancel);
   pi.events.on("pi-session-maintenance:capabilities:v1", (data) => {
     const r = data as { capabilities?: Record<string, unknown> };
     (r.capabilities ??= {}).memory = { protocol: 1, channel: "okf:maintenance:v1" };
@@ -135,7 +141,7 @@ export function registerMemoryMaintenance(pi: ExtensionAPI, options: { packageVe
       if (r.protocol !== 1 || !["status", "upgrade", "review", "push"].includes(r.operation)) throw new Error("Unsupported memory maintenance request");
       const bundle = resolveKnowledgeDir(r.cwd);
       if (!bundle) return { available: false, complete: true, key: "no-bundle" };
-      const binary = options.getBinary(); requireCurrentContract(binary);
+      const binary = options.getBinary(r.cwd); requireCurrentContract(binary);
       const model = r.model ? r.context.modelRegistry.find(r.model.slice(0, r.model.indexOf("/")), r.model.slice(r.model.indexOf("/") + 1)) : r.context.model;
       if (!model) throw new Error("Select a review model or configure reviewModel");
       const modelKey = `${model.provider}/${model.id}`;
@@ -156,7 +162,7 @@ export function registerMemoryMaintenance(pi: ExtensionAPI, options: { packageVe
         throw new MemoryMaintenanceIssue("deferred", "bundle-lock", bundle, `Knowledge-bundle acquisition deferred: ${(error as Error).message}`);
       } // same bundle lock as interactive/managed upgrades
       try {
-        if (r.operation === "push") { await pushKnowledge(bundle, signal); return { available: true, complete: true, key: key(modelKey) }; }
+        if (r.operation === "push") { await pushKnowledge(bundle, signal); r.onEvent?.("push", { bundle }); return { available: true, complete: true, key: key(modelKey) }; }
         if (r.operation === "review" && !status.finished) throw new Error("Knowledge upgrades must finish before review");
         const call = async (input: unknown, guide: string, known: Record<string, string>) => {
           signal.throwIfAborted();
@@ -168,10 +174,27 @@ export function registerMemoryMaintenance(pi: ExtensionAPI, options: { packageVe
           const content = JSON.stringify({ source: input, corpus: known });
           const maxTokens = Math.min(8192, model.maxTokens);
           if ((systemPrompt.length + content.length) / 2 + maxTokens + 1000 > model.contextWindow) throw new Error("Review exceeds configured model context; no source was truncated");
-          const response = await r.context.modelRegistry.streamSimple(model, { systemPrompt, messages: [{ role: "user", content, timestamp: Date.now() }] }, {
+          const messages = [{ role: "user" as const, content, timestamp: Date.now() }];
+          r.onModelEvent?.({ type: "start", provider: model.provider, model: model.id, systemPrompt, messages, maxTokens });
+          const stream = r.context.modelRegistry.streamSimple(model, { systemPrompt, messages }, {
             signal: AbortSignal.any([signal, AbortSignal.timeout(180_000)]), maxTokens, sessionId: randomUUID(),
-          }).result();
+          });
+          try {
+            if (r.onModelEvent && Symbol.asyncIterator in stream) {
+              for await (const event of stream) {
+                if (event.type === "text_delta" || event.type === "thinking_delta") r.onModelEvent({ type: "delta",
+                  channel: event.type === "text_delta" ? "text" : "thinking", delta: event.delta });
+              }
+            }
+          } catch (error) {
+            own.abort(error);
+            const final = await stream.result().catch(() => undefined);
+            if (final) r.onUsage?.(final.usage);
+            throw error;
+          }
+          const response = await stream.result();
           r.onUsage?.(response.usage);
+          r.onModelEvent?.({ type: "end", message: response });
           signal.throwIfAborted();
           if (!["stop", "toolUse"].includes(response.stopReason)) throw new Error(response.errorMessage ?? `Review stopped: ${response.stopReason}`);
           return response.content.filter((b) => b.type === "text").map((b: any) => b.text).join("\n");
@@ -194,6 +217,7 @@ export function registerMemoryMaintenance(pi: ExtensionAPI, options: { packageVe
           validated(binary, bundle);
           const result = runner.finalize(binary);
           validated(binary, bundle);
+          r.onEvent?.("commit", { commit: result.commit, bundle });
           return { available: true, complete: true, key: key(modelKey), detail: { commit: result.commit } };
         }
         if (!r.source || r.source.cwd !== r.cwd || digest(r.source.entries) !== r.source.hash) throw new Error("Invalid review source snapshot");
@@ -206,6 +230,7 @@ export function registerMemoryMaintenance(pi: ExtensionAPI, options: { packageVe
           let journal: Journal | undefined = existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : undefined;
           if (journal?.phase === "committed") { done++; continue; }
           if (!journal) {
+            r.onProgress?.(`knowledge: ${done}/${chunks.length} sections; reviewing next section`);
             const known = corpus(bundle);
             const text = await call({ path: r.source.path, entries: section }, "Extract only durable WHY, never a transcript or workflow log.", known);
             const changes = parse(text, section, known);
@@ -232,10 +257,13 @@ export function registerMemoryMaintenance(pi: ExtensionAPI, options: { packageVe
             unlinkSync(file);
             return { available: true, complete: false, key: key(modelKey), detail: { replanning: true } };
           }
+          r.onEvent?.("plan", { sectionHash, concepts: journal.changes.map(c => c.concept) });
           apply(binary, bundle, journal);
           validated(binary, bundle);
           const commit = commitKnowledge(bundle, "chore(memory): maintain knowledge from session evidence");
           const validation = validated(binary, bundle);
+          r.onEvent?.("validation", { ok: validation.ok, advisories: validation.advisories });
+          r.onEvent?.("commit", { commit, bundle });
           journal.phase = "committed"; journal.commit = commit; atomic(file, journal);
           done++;
           r.onProgress?.(`knowledge: ${done}/${chunks.length} sections validated and committed`);

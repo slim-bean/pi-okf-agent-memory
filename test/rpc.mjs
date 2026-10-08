@@ -83,6 +83,14 @@ try {
   assert.equal(commands.success, true, JSON.stringify(commands));
   assert.ok(commands.data.commands.some(c => c.name === 'memory-upgrade'));
   assert.ok(commands.data.commands.some(c => c.name === 'memory-setup'));
+  assert.ok(commands.data.commands.some(c => c.name === 'memory-diagnostics'));
+  send({ id: 'diagnostics', type: 'prompt', message: '/memory-diagnostics' });
+  assert.equal((await waitFor(r => r.type === 'response' && r.id === 'diagnostics')).success, true);
+  const diagnostics = await waitFor(r => r.method === 'notify' && r.message.includes('Loaded extension:'));
+  assert.ok(diagnostics.message.includes(join(root, 'index.ts')));
+  assert.ok(diagnostics.message.includes(`Selected binary: ${binary}`));
+  assert.ok(diagnostics.message.includes(join(work, '.pi', 'settings.json')));
+  assert.ok(diagnostics.message.includes(join(work, 'agent', 'settings.json')));
   const notice = await waitFor(r => r.type === 'extension_ui_request' && r.method === 'notify' && r.message.includes('/memory-setup'));
   assert.match(notice.message, /setup needed/);
   assert.equal(existsSync(bundle), false);

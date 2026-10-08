@@ -1,18 +1,23 @@
 # AGENTS.md
 
-pi-okf-agent-memory integrates a local OKF v0.2 corpus with pi. Read `README.md` for usage, upgrade behavior, and development commands. The current release is 0.3.0, bundling OKF v0.4.3.
+pi-okf-agent-memory integrates a local OKF v0.2 corpus with pi. Read `README.md` for usage, upgrade behavior, and development commands. The current release is 0.4.0, bundling OKF v0.4.3.
 
 ## Layout
 
 - `index.ts`: tools, knowledge-review/context commands, session index injection.
 - `lib/okf.ts`: binary/bundle resolution and structured CLI diagnostics.
+- `lib/diagnostics.ts`: read-only /memory-diagnostics and typed okf-binary blockers.
+  Show module/candidate/settings paths, never credentials or invented loader provenance.
+  Relative overrides use the session cwd; invalid explicit overrides never fall back.
 - `lib/setup.ts` / `lib/setup-extension.ts`: Git-backed setup, startup confirmation and explicit `okf:setup:*` host protocol. See `docs/setup.md` for provisioning/Yono; setup never grants upgrade consent.
 - `lib/upgrades.ts`: append-only upgrade registry, bundle-scoped ledger, review lock and required finalization.
 - `lib/git.ts`: commit proof and scoped Git operations; preserve staging outside the bundle.
 - `lib/maintenance.ts` / `lib/maintenance-git.ts`: optional snapshot review/upgrade adapter;
   see `docs/maintenance.md`. Tool-free model proposals, scoped CLI writes, validation,
   automatic commits, separately requested non-force upstream pushes. `maintenance-issue.ts`
-  exposes stable Git/validation prerequisite codes for actionable coordinator messaging. Never launch an
+  exposes stable Git/validation prerequisite codes for actionable coordinator messaging. Optional
+  onModelEvent/onEvent callbacks expose parsed model streams and operational results to a host;
+  never include auth/transport options, start a second agent, or release ownership before an aborted stream settles. Never launch an
   authenticated pi in tests; fake registries plus real temporary CLI/Git fixtures only.
 - `lib/upgrade-extension.ts`: shared interactive/host workflow, notices and step delivery.
 - `lib/managed-upgrades.ts`: versioned in-process host protocol, idle scheduling and lifecycle. See `docs/managed-upgrades.md`; `examples/managed-host.ts` is an explicitly loaded example, never a default package resource.

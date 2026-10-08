@@ -28,7 +28,8 @@ function fixture() {
   h.ctx.model=model;
   h.ctx.modelRegistry={find:()=>model,hasConfiguredAuth:()=>true,streamSimple(_model,input) {
     calls++; assert.match(input.systemPrompt,/UNTRUSTED/);
-    return {result:async()=>({stopReason:'stop',content:[{type:'text',text:JSON.stringify(response)}],usage:{cost:{total:0.01}}})};
+    const result={role:'assistant',api:'openai-responses',provider:'fake',model:'offline',timestamp:Date.now(),stopReason:'stop',content:[{type:'text',text:JSON.stringify(response)}],usage:{cost:{total:0.01}}};
+    return {async *[Symbol.asyncIterator](){yield {type:'text_delta',delta:result.content[0].text};},result:async()=>result};
   }};
   const entries=[{index:1,id:'a',parentId:null,timestampMs:1,role:'user',text:'Persist the rationale for isolated test profiles.'}];
   const source={path:join(cwd,'source.jsonl'),cwd,hash:hash(entries),entries};
@@ -51,6 +52,19 @@ test('capability is read-only; unattended upgrades and no-change review commit w
     assert.equal(git(f.bundle,'status','--porcelain'),''); assert.equal(f.h.prompts.length,0);
     await assert.rejects(f.run('push'),e=>e.kind==='blocked'&&e.code==='git-upstream'&&/upstream/.test(e.message));
   } finally {f.close()}
+});
+
+test('optional model and operation observers capture exact prompts, parsed deltas, usage and commit references',async()=>{
+  const f=fixture();const events=[];const operations=[];let cost=0;
+  try {
+    await f.run('upgrade',{onModelEvent:event=>events.push(event),onEvent:(type,detail)=>operations.push({type,detail}),onUsage:usage=>cost+=usage.cost.total});
+    assert.deepEqual(events.map(event=>event.type),['start','delta','end']);
+    assert.match(events[0].systemPrompt,/UNTRUSTED/);assert.equal(events[2].message.role,'assistant');
+    assert.equal(cost,.01);assert.ok(operations.some(event=>event.type==='commit'&&event.detail.commit));
+    events.length=0;
+    await assert.rejects(f.run('review',{onModelEvent:event=>{if(event.type==='delta')throw new Error('transcript unavailable');}}),/transcript unavailable/);
+    assert.equal(git(f.bundle,'status','--porcelain'),'');
+  }finally{f.close()}
 });
 
 test('warranted changes use CLI and commit automatically; stale source prevents writes',async()=>{

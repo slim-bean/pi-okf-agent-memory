@@ -9,8 +9,10 @@ import { binaryVersion, requireCurrentContract, resolveKnowledgeDir, resolveOkfB
 import { registerUpgrades } from "./lib/upgrade-extension.js";
 import { registerSetup } from "./lib/setup-extension.js";
 import { registerMemoryMaintenance } from "./lib/maintenance.js";
+import { binaryDiagnostics, formatBinaryDiagnostics, requireOkfBin } from "./lib/diagnostics.js";
 
-const EXT_DIR = dirname(fileURLToPath(import.meta.url));
+const EXT_FILE = fileURLToPath(import.meta.url);
+const EXT_DIR = dirname(EXT_FILE);
 const PACKAGE_VERSION: string = JSON.parse(readFileSync(join(EXT_DIR, "package.json"), "utf8")).version;
 // Package installs keep skills beside index.ts; install.sh places them in .pi/skills.
 const SKILLS_DIR = existsSync(join(EXT_DIR, "skills")) ? join(EXT_DIR, "skills") : join(EXT_DIR, "..", "..", "skills");
@@ -30,16 +32,21 @@ const REVIEW_PROMPT = `Perform a knowledge review of this session using the okf-
 Pending package upgrades are a separate, user-approved /memory-upgrade workflow; do not silently perform them during this review.`;
 
 export default function okfMemoryExtension(pi: ExtensionAPI) {
+	let workspace = process.cwd();
+	pi.on("session_start", (_event, ctx) => { workspace = ctx.cwd; });
+	pi.registerCommand("memory-diagnostics", {
+		description: "Show loaded package, binary lookup and resource settings paths (read-only)",
+		handler: async (_args, ctx) => {
+			const text = formatBinaryDiagnostics(binaryDiagnostics(EXT_FILE, ctx.cwd));
+			ctx.ui.notify(text.replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, ""), "info");
+		},
+	});
 	function requireKnowledge(cwd: string): string {
 		const dir = resolveKnowledgeDir(cwd);
 		if (!dir) throw new Error(`No OKF knowledge bundle found. Run /memory-setup or request explicit host setup for ${join(cwd, "knowledge")}; OKF_KNOWLEDGE_DIR can select another bundle.`);
 		return dir;
 	}
-	function requireBin(): string {
-		const binary = resolveOkfBin();
-		if (!binary) throw new Error("okf binary not found. Set OKF_BIN, restore this package's bin/ directory, or put okf on PATH.");
-		return binary;
-	}
+	function requireBin(cwd = workspace): string { return requireOkfBin(EXT_FILE, cwd); }
 
 	let upgrades: ReturnType<typeof registerUpgrades> | undefined;
 	const setup = registerSetup(pi, { packageVersion: PACKAGE_VERSION, getBinary: requireBin,
@@ -63,7 +70,7 @@ export default function okfMemoryExtension(pi: ExtensionAPI) {
 		}),
 		async execute(_id, params, _signal, _onUpdate, ctx) {
 			const dir = requireKnowledge(ctx.cwd);
-			const binary = requireBin();
+			const binary = requireBin(ctx.cwd);
 			const query = params.query?.trim();
 			const path = params.for_path?.trim();
 			if (!query && !path) throw new Error("Supply query or for_path.");
@@ -86,7 +93,7 @@ export default function okfMemoryExtension(pi: ExtensionAPI) {
 			const dir = requireKnowledge(ctx.cwd);
 			const concept = params.concept.replace(/\.md$/, "");
 			if (!concept || concept.startsWith("-") || concept === "help") throw new Error("Supply a concept ID, not a CLI flag/help request.");
-			return { content: [{ type: "text", text: fit(runOkf(requireBin(), ["show", concept, dir, "--json"]).stdout) }], details: { concept } };
+			return { content: [{ type: "text", text: fit(runOkf(requireBin(ctx.cwd), ["show", concept, dir, "--json"]).stdout) }], details: { concept } };
 		},
 	});
 
@@ -97,7 +104,7 @@ export default function okfMemoryExtension(pi: ExtensionAPI) {
 		parameters: Type.Object({ orphanPolicy: Type.Optional(Type.Union([Type.Literal("advisory"), Type.Literal("strict")])) }),
 		async execute(_id, params, _signal, _onUpdate, ctx) {
 			const dir = requireKnowledge(ctx.cwd);
-			const binary = requireBin();
+			const binary = requireBin(ctx.cwd);
 			const version = binaryVersion(binary);
 			const compatible = supportsCurrentContract(version);
 			const result = validateBundle(binary, dir, params.orphanPolicy);
@@ -121,7 +128,7 @@ export default function okfMemoryExtension(pi: ExtensionAPI) {
 				if (ctx.hasUI) ctx.ui.notify("Wait until the agent is idle before starting a knowledge review.", "warning");
 				return;
 			}
-			pi.sendUserMessage(`${REVIEW_PROMPT}\nResolved OKF executable: ${JSON.stringify(requireBin())}. Bundle: ${JSON.stringify(requireKnowledge(ctx.cwd))}. Use these exact paths, shell-quoted.`);
+			pi.sendUserMessage(`${REVIEW_PROMPT}\nResolved OKF executable: ${JSON.stringify(requireBin(ctx.cwd))}. Bundle: ${JSON.stringify(requireKnowledge(ctx.cwd))}. Use these exact paths, shell-quoted.`);
 		},
 	});
 

@@ -22,6 +22,8 @@ Requests on `okf:maintenance:v1` assign `request.result` synchronously:
   source?,                 // {path,cwd,hash,entries}; all-branch user/assistant text
   signal?, assertSource?,  // review requires a callback that verifies current source/ownership
   onUsage?, onProgress?,
+  onModelEvent?,           // optional parsed prompt/delta/final-response observer
+  onEvent?,                // optional plan/validation/commit/push events
   result?: Promise<unknown>
 }
 ```
@@ -38,6 +40,15 @@ so the coordinator can explain the actual prerequisite and next action instead
 of recommending an ineffective blind retry. No repair or security bypass is performed. Missing bundles
 return `available:false` without creating data. No setup, identity or remote is
 invented. Configure a Git-backed bundle first; the setup protocol is separate.
+
+Optional observability callbacks are data-only. `onModelEvent` receives
+`{type:"start",provider,model,systemPrompt,messages}`, then zero or more
+`{type:"delta",channel:"text"|"thinking",delta}`, then `{type:"end",message}`
+with the final native assistant message. Opaque provider metadata is preserved,
+not interpreted. `onEvent(type,detail)` supplies operational references; neither
+callback exposes HTTP credentials or transport options. The host owns logging,
+privacy/retention and UI. If a callback fails mid-stream, abort and await the
+provider before releasing ownership; reported usage is still accounted when available.
 
 ## Execution and limits
 

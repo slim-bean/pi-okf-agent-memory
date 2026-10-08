@@ -1,10 +1,11 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, realpathSync } from "node:fs";
 import { delimiter, isAbsolute, join, resolve } from "node:path";
+import { homedir } from "node:os";
 
-export function resolveOkfBin(extensionDir: string): string | null {
+export function resolveOkfBin(extensionDir: string, cwd = process.cwd()): string | null {
 	// An explicit override must not silently fall back to a different executable.
-	if (process.env.OKF_BIN) return resolve(process.env.OKF_BIN);
+	if (process.env.OKF_BIN) return resolve(cwd, process.env.OKF_BIN.replace(/^~(?=\/|$)/, homedir()));
 	const arch = process.arch === "x64" ? "amd64" : process.arch === "arm64" ? "arm64" : null;
 	if (arch && (process.platform === "linux" || process.platform === "darwin")) {
 		const matched = join(extensionDir, "bin", `okf-${process.platform}-${arch}`);
@@ -13,7 +14,7 @@ export function resolveOkfBin(extensionDir: string): string | null {
 	const sibling = join(extensionDir, "bin", "okf");
 	if (existsSync(sibling)) return sibling;
 	for (const dir of (process.env.PATH ?? "").split(delimiter)) {
-		if (dir && existsSync(join(dir, "okf"))) return resolve(dir, "okf");
+		if (dir && existsSync(resolve(cwd, dir, "okf"))) return resolve(cwd, dir, "okf");
 	}
 	return null;
 }
@@ -32,7 +33,7 @@ export function resolveKnowledgeDir(cwd: string): string | null {
 export function runOkf(binary: string, args: string[], acceptedCodes = [0]) {
 	const result = spawnSync(binary, args, { encoding: "utf8", timeout: 15_000, maxBuffer: 10 * 1024 * 1024 });
 	if (result.error || result.status === null || !acceptedCodes.includes(result.status)) {
-		throw new Error(`okf ${args[0]} failed: ${result.error?.message ?? `exit ${result.status}, signal ${result.signal}`}\n${result.stdout ?? ""}${result.stderr ?? ""}`);
+		throw new Error(`okf ${args[0]} failed (binary: ${binary}): ${result.error?.message ?? `exit ${result.status}, signal ${result.signal}`}\n${result.stdout ?? ""}${result.stderr ?? ""}`);
 	}
 	return { stdout: result.stdout, stderr: result.stderr, code: result.status };
 }

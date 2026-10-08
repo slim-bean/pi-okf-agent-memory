@@ -2,7 +2,9 @@
 
 [pi](https://pi.dev) extension and skills for [OKF Agent Memory](https://github.com/okf-memory/okf-agent-memory): local, Git-native project memory that retains **why** decisions were made without turning session history into a knowledge dump.
 
-Release **0.3.0** bundles **OKF v0.4.3**. The corpus format remains **OKF v0.2**.
+Release **0.4.0** bundles **OKF v0.4.3**. The corpus format remains **OKF v0.2**.
+This release adds read-only binary diagnostics and maintenance model/operation
+tracing for coordinator-owned run transcripts; no new corpus migration is required.
 
 ## Install
 
@@ -17,8 +19,8 @@ pi -e .
 Install this release using its pinned tag:
 
 ```bash
-pi install git:github.com/slim-bean/pi-okf-agent-memory@v0.3.0
-pi install -l git:github.com/slim-bean/pi-okf-agent-memory@v0.3.0  # project-local
+pi install git:github.com/slim-bean/pi-okf-agent-memory@v0.4.0
+pi install -l git:github.com/slim-bean/pi-okf-agent-memory@v0.4.0  # project-local
 ```
 
 Pinned refs do not move automatically. Select the new tag explicitly, then restart pi or `/reload`. The extension checks project upgrade progress when it loads; it does not poll for available package releases.
@@ -35,7 +37,7 @@ RPC/headless startup never opens unsolicited dialogs. For provisioned TUI sessio
 
 Optional environment variables:
 
-- `OKF_BIN`: explicit executable path (invalid overrides fail rather than silently falling back). Otherwise: host-matched package binary → legacy `bin/okf` → PATH.
+- `OKF_BIN`: explicit executable path (`~` expands to HOME; relative paths resolve from the session workspace; invalid overrides fail rather than silently falling back). Otherwise: host-matched package binary → legacy `bin/okf` → PATH.
 - `OKF_KNOWLEDGE_DIR`: explicit bundle path, relative to the session working directory if not absolute. Otherwise: `<cwd>/knowledge`, then an existing `/workspace/knowledge` only for `/workspace`-rooted deployments. Missing bundles are created at `<cwd>/knowledge` unless overridden.
 - `OKF_SETUP_MODE`: `prompt` (default: offer setup at TUI startup) or `manual` (no startup dialogs, including TUI). Neither value authorizes unattended writes.
 - `OKF_ORPHAN_POLICY`: `advisory` (default) or `strict`. Advisory allows independent
@@ -52,10 +54,23 @@ Optional environment variables:
 | `memory_upgrade` | Inspect status; retrieve/verify approved steps; finalize the required local Git commit |
 | `/memory-setup` | Confirm bundle/Git setup; `status` is read-only |
 | `/memory-context` | Queue the root index for the next turn |
+| `/memory-diagnostics` | Read-only loaded package, binary candidates and resource settings provenance |
 | `/knowledge-review` | Review this session for durable rationale; most reviews need no writes |
 | `/memory-upgrade` | Confirm and start/resume an ordered upgrade review |
 
 Session startup/resume/fork queues the index or an empty-corpus hint. Concept count comes from the CLI, not root-index formatting. The normal skill teaches search-before-write, governance, provenance, and the why-only write budget.
+
+## Binary diagnostics
+
+`/memory-diagnostics` never runs a model or the selected executable. It shows the
+loaded extension file/package directory, workspace, OS/architecture, OKF_BIN
+selection and candidate files with missing/non-executable/usable status. It also
+shows personal and project `settings.json` paths and matching local resource
+declarations; CLI `-e` and auto-discovery can load code without such a declaration.
+OKF binary selection itself uses environment/package/PATH, not a separate config
+file. Missing/unusable binaries report the same diagnostic detail as a structured
+`okf-binary` blocker, deduplicated by the loaded package/override resource. An
+explicit invalid override never silently falls back to another executable.
 
 ## Validation policy
 
@@ -77,7 +92,7 @@ pending. Index discoverability remains separate from semantic relationships.
 
 A bundle with pending work shows a startup notice and persistent status:
 
-> pi-okf-agent-memory 0.3.0: 1 bundle upgrade step pending. Run /memory-upgrade to review it in order.
+> pi-okf-agent-memory 0.4.0: 1 bundle upgrade step pending. Run /memory-upgrade to review it in order.
 
 **Startup inspection is read-only:** setup writes require user confirmation or a bound host setup request. No migration, ledger creation, or agent turn follows setup alone. Upgrade checks run on reload too; a short model-facing warning persists while work is pending. Missing Git setup is reported before upgrade review, not discovered only at its final commit.
 
@@ -133,7 +148,10 @@ package's `okf:maintenance:v1` adapter; normal OKF startup still starts no work.
 Review calls use the existing model registry, not authenticated pi subprocesses.
 Warranted concept addenda are applied through the CLI, validated, and **committed
 automatically**. Configured upstream pushes are separate retryable operations.
-Missing bundles/Git identity are diagnosed, never fabricated. See
+Missing bundles/Git identity are diagnosed, never fabricated. Updated coordinators
+can capture parsed prompt/stream/final-response events and plan/validation/commit
+references through optional `onModelEvent`/`onEvent` callbacks. No HTTP credentials
+or new agent sessions are exposed; the coordinator owns private transcripts and UI. See
 [Unattended maintenance protocol](docs/maintenance.md) for authority, checkpoints,
 limits, cancellation, bundle locking and the no-human-approval normal path.
 
