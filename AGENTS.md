@@ -1,6 +1,6 @@
 # AGENTS.md
 
-pi-okf-agent-memory integrates a local OKF v0.2 corpus with pi. Read `README.md` for usage, upgrade behavior, and development commands. The current release is 0.4.0, bundling OKF v0.4.3.
+pi-okf-agent-memory integrates a local OKF v0.2 corpus with pi. Read `README.md` for usage, upgrade behavior, and development commands. The current release is 0.5.0, bundling OKF v0.4.3.
 
 ## Layout
 
@@ -17,7 +17,10 @@ pi-okf-agent-memory integrates a local OKF v0.2 corpus with pi. Read `README.md`
   automatic commits, separately requested non-force upstream pushes. `maintenance-issue.ts`
   exposes stable Git/validation prerequisite codes for actionable coordinator messaging. Optional
   onModelEvent/onEvent callbacks expose parsed model streams and operational results to a host;
-  never include auth/transport options, start a second agent, or release ownership before an aborted stream settles. Never launch an
+  never include auth/transport options, start a second agent, or release ownership before an aborted stream settles.
+  model-deadline.ts preserves the first cancellation cause and elapsed/deadline metadata;
+  modelTimeoutMs overrides the default 600s deadline. Native response messages stay
+  unchanged; additive end-event diagnostics distinguish timeout from provider abortion. Never launch an
   authenticated pi in tests; fake registries plus real temporary CLI/Git fixtures only.
 - `lib/upgrade-extension.ts`: shared interactive/host workflow, notices and step delivery.
 - `lib/managed-upgrades.ts`: versioned in-process host protocol, idle scheduling and lifecycle. See `docs/managed-upgrades.md`; `examples/managed-host.ts` is an explicitly loaded example, never a default package resource.

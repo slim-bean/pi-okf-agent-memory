@@ -5,6 +5,7 @@ import { dirname, join, relative, resolve } from "node:path";
 import { UpgradeRunner } from "./upgrades.js";
 import { requireCurrentContract, resolveKnowledgeDir, runOkf, validateBundle, orphanPolicy } from "./okf.js";
 import { commitKnowledge, pushKnowledge } from "./maintenance-git.js";
+import { modelDeadline } from "./model-deadline.js";
 
 const POLICY = "1"; // extraction checkpoint version: validation policy must not discard saved plans
 export { MemoryMaintenanceIssue } from "./maintenance-issue.js";
@@ -25,6 +26,7 @@ export interface MemoryMaintenanceRequest {
   protocol: 1; operation: "status" | "upgrade" | "review" | "push";
   context: ExtensionContext; cwd: string; source?: Source; workDir: string; model?: string; push?: boolean;
   signal?: AbortSignal; assertSource?: () => void; onUsage?: (usage: any) => void; onProgress?: (text: string) => void;
+  modelTimeoutMs?: number;
   onModelEvent?: (event: any) => void;
   onEvent?: (type: string, detail?: unknown) => void;
   result?: Promise<unknown>;
@@ -174,10 +176,11 @@ export function registerMemoryMaintenance(pi: ExtensionAPI, options: { packageVe
           const content = JSON.stringify({ source: input, corpus: known });
           const maxTokens = Math.min(8192, model.maxTokens);
           if ((systemPrompt.length + content.length) / 2 + maxTokens + 1000 > model.contextWindow) throw new Error("Review exceeds configured model context; no source was truncated");
+          const callDeadline = modelDeadline([signal], r.modelTimeoutMs);
           const messages = [{ role: "user" as const, content, timestamp: Date.now() }];
-          r.onModelEvent?.({ type: "start", provider: model.provider, model: model.id, systemPrompt, messages, maxTokens });
+          r.onModelEvent?.({ type: "start", provider: model.provider, model: model.id, systemPrompt, messages, maxTokens, timeoutMs: r.modelTimeoutMs ?? 600_000 });
           const stream = r.context.modelRegistry.streamSimple(model, { systemPrompt, messages }, {
-            signal: AbortSignal.any([signal, AbortSignal.timeout(180_000)]), maxTokens, sessionId: randomUUID(),
+            signal: callDeadline.signal, maxTokens, sessionId: randomUUID(),
           });
           try {
             if (r.onModelEvent && Symbol.asyncIterator in stream) {
@@ -190,13 +193,15 @@ export function registerMemoryMaintenance(pi: ExtensionAPI, options: { packageVe
             own.abort(error);
             const final = await stream.result().catch(() => undefined);
             if (final) r.onUsage?.(final.usage);
-            throw error;
+            throw new Error(callDeadline.diagnostics().abortReason ?? String(error));
           }
-          const response = await stream.result();
+          const response = await stream.result().catch(error => { throw new Error(callDeadline.diagnostics().abortReason ?? String(error)); });
           r.onUsage?.(response.usage);
-          r.onModelEvent?.({ type: "end", message: response });
-          signal.throwIfAborted();
-          if (!["stop", "toolUse"].includes(response.stopReason)) throw new Error(response.errorMessage ?? `Review stopped: ${response.stopReason}`);
+          const diagnostics = callDeadline.diagnostics(response.stopReason, response.errorMessage);
+          r.onModelEvent?.({ type: "end", message: response, ...diagnostics });
+          if (callDeadline.signal.aborted || !["stop", "toolUse"].includes(response.stopReason)) {
+            throw new Error(diagnostics.abortReason ?? response.errorMessage ?? `Review stopped: ${response.stopReason}`);
+          }
           return response.content.filter((b) => b.type === "text").map((b: any) => b.text).join("\n");
         };
         if (r.operation === "upgrade") {

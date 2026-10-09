@@ -19,6 +19,7 @@ Requests on `okf:maintenance:v1` assign `request.result` synchronously:
   cwd,                     // source workspace; never infer it from the current conversation
   workDir,                 // private host-owned durable checkpoint directory
   model?,                  // provider/model-id; defaults to context.model
+  modelTimeoutMs?,          // per-call deadline, default 600000; range 1–3600000
   source?,                 // {path,cwd,hash,entries}; all-branch user/assistant text
   signal?, assertSource?,  // review requires a callback that verifies current source/ownership
   onUsage?, onProgress?,
@@ -43,8 +44,11 @@ invented. Configure a Git-backed bundle first; the setup protocol is separate.
 
 Optional observability callbacks are data-only. `onModelEvent` receives
 `{type:"start",provider,model,systemPrompt,messages}`, then zero or more
-`{type:"delta",channel:"text"|"thinking",delta}`, then `{type:"end",message}`
-with the final native assistant message. Opaque provider metadata is preserved,
+`{type:"delta",channel:"text"|"thinking",delta}`, then
+`{type:"end",message,timeoutMs,elapsedMs,abortReason?}` with the unchanged final
+native assistant message. Start events include `timeoutMs`. Abort diagnostics
+preserve the first local cancellation reason, name deadline expiry explicitly,
+and distinguish provider-reported abortion without a local cancellation. Opaque provider metadata is preserved,
 not interpreted. `onEvent(type,detail)` supplies operational references; neither
 callback exposes HTTP credentials or transport options. The host owns logging,
 privacy/retention and UI. If a callback fails mid-stream, abort and await the
@@ -58,7 +62,10 @@ provider before releasing ownership; reported usage is still accounted when avai
   (excluding the append-only log). It splits long conversation text without sampling.
   At most one new section is processed per opportunity; completed section receipts
   reuse unchanged source sections. Model calls are tool-free and use the existing
-  registry, bounded to three minutes and 8192 output tokens.
+  registry, bounded to ten minutes by default and 8192 output tokens. Hosts can
+  override the per-call deadline with `modelTimeoutMs`; pi-session-maintenance
+  supplies its configurable `modelTimeoutSeconds`. Longer deadlines do not disable
+  foreground/peer cancellation or override shorter provider/server limits.
 - Structured plans cite source entries and permit only create or attributed body
   addenda to concepts. They cannot delete, overwrite frontmatter, grant governance,
   mark human verification, or execute shell/browser actions. Corrections qualify

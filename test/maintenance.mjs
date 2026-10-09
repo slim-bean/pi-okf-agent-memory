@@ -60,11 +60,31 @@ test('optional model and operation observers capture exact prompts, parsed delta
     await f.run('upgrade',{onModelEvent:event=>events.push(event),onEvent:(type,detail)=>operations.push({type,detail}),onUsage:usage=>cost+=usage.cost.total});
     assert.deepEqual(events.map(event=>event.type),['start','delta','end']);
     assert.match(events[0].systemPrompt,/UNTRUSTED/);assert.equal(events[2].message.role,'assistant');
+    assert.equal(events[0].timeoutMs,600000);assert.ok(events[2].elapsedMs>=0);
     assert.equal(cost,.01);assert.ok(operations.some(event=>event.type==='commit'&&event.detail.commit));
     events.length=0;
     await assert.rejects(f.run('review',{onModelEvent:event=>{if(event.type==='delta')throw new Error('transcript unavailable');}}),/transcript unavailable/);
     assert.equal(git(f.bundle,'status','--porcelain'),'');
   }finally{f.close()}
+});
+
+test('timeout and foreground cancellation record their actual causes without knowledge writes',async()=>{
+  const f=fixture();const keepAlive=setTimeout(()=>{},1000);
+  try {
+    await f.run('upgrade');
+    f.h.ctx.modelRegistry.streamSimple=(_m,_i,options)=>({result:()=>new Promise(resolve=>{
+      const finish=()=>resolve({role:'assistant',provider:'fake',model:'offline',api:'openai-responses',timestamp:Date.now(),
+        stopReason:'aborted',content:[],usage:{cost:{total:.01}}});
+      if(options.signal.aborted)finish();else options.signal.addEventListener('abort',finish,{once:true});
+    })});
+    const events=[];let cost=0;
+    await assert.rejects(f.run('review',{modelTimeoutMs:20,onModelEvent:e=>events.push(e),onUsage:u=>cost+=u.cost.total}),/timed out after 0.02s/);
+    assert.match(events.at(-1).abortReason,/timed out/);assert.equal(events.at(-1).timeoutMs,20);assert.equal(cost,.01);
+    const parent=new AbortController();
+    const request=f.run('review',{signal:parent.signal,onModelEvent:e=>{if(e.type==='start')parent.abort(new Error('Peer foreground input'));}});
+    await assert.rejects(request,/Peer foreground input/);
+    assert.equal(git(f.bundle,'status','--porcelain'),'');
+  }finally{clearTimeout(keepAlive);f.close()}
 });
 
 test('warranted changes use CLI and commit automatically; stale source prevents writes',async()=>{

@@ -2,9 +2,9 @@
 
 [pi](https://pi.dev) extension and skills for [OKF Agent Memory](https://github.com/okf-memory/okf-agent-memory): local, Git-native project memory that retains **why** decisions were made without turning session history into a knowledge dump.
 
-Release **0.4.0** bundles **OKF v0.4.3**. The corpus format remains **OKF v0.2**.
-This release adds read-only binary diagnostics and maintenance model/operation
-tracing for coordinator-owned run transcripts; no new corpus migration is required.
+Release **0.5.0** bundles **OKF v0.4.3**. The corpus format remains **OKF v0.2**.
+This release adds configurable maintenance deadlines and explicit abort diagnostics
+for coordinator-owned run transcripts; no new corpus migration is required.
 
 ## Install
 
@@ -19,8 +19,8 @@ pi -e .
 Install this release using its pinned tag:
 
 ```bash
-pi install git:github.com/slim-bean/pi-okf-agent-memory@v0.4.0
-pi install -l git:github.com/slim-bean/pi-okf-agent-memory@v0.4.0  # project-local
+pi install git:github.com/slim-bean/pi-okf-agent-memory@v0.5.0
+pi install -l git:github.com/slim-bean/pi-okf-agent-memory@v0.5.0  # project-local
 ```
 
 Pinned refs do not move automatically. Select the new tag explicitly, then restart pi or `/reload`. The extension checks project upgrade progress when it loads; it does not poll for available package releases.
@@ -92,7 +92,7 @@ pending. Index discoverability remains separate from semantic relationships.
 
 A bundle with pending work shows a startup notice and persistent status:
 
-> pi-okf-agent-memory 0.4.0: 1 bundle upgrade step pending. Run /memory-upgrade to review it in order.
+> pi-okf-agent-memory 0.5.0: 1 bundle upgrade step pending. Run /memory-upgrade to review it in order.
 
 **Startup inspection is read-only:** setup writes require user confirmation or a bound host setup request. No migration, ledger creation, or agent turn follows setup alone. Upgrade checks run on reload too; a short model-facing warning persists while work is pending. Missing Git setup is reported before upgrade review, not discovered only at its final commit.
 
@@ -151,7 +151,10 @@ automatically**. Configured upstream pushes are separate retryable operations.
 Missing bundles/Git identity are diagnosed, never fabricated. Updated coordinators
 can capture parsed prompt/stream/final-response events and plan/validation/commit
 references through optional `onModelEvent`/`onEvent` callbacks. No HTTP credentials
-or new agent sessions are exposed; the coordinator owns private transcripts and UI. See
+or new agent sessions are exposed; the coordinator owns private transcripts and UI.
+Model calls default to a ten-minute deadline; maintenance's `modelTimeoutSeconds`
+setting can override it (up to one hour). Traces record elapsed/deadline details and
+the originating cancellation reason, while preserving the native provider message. See
 [Unattended maintenance protocol](docs/maintenance.md) for authority, checkpoints,
 limits, cancellation, bundle locking and the no-human-approval normal path.
 
