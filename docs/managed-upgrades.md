@@ -1,6 +1,6 @@
 # Managed upgrades: host integration protocol v1
 
-This interface lets a trusted pi host adapter (for example a Yono-owned extension) run the same upgrade workflow as `/memory-upgrade`, without a console or dialog. It works in TUI, RPC, and host-managed headless runtimes kept alive for the operation. **No persona settings, step allowlist, or environment opt-in are required.** The explicit host `run` request supplies consent for all applicable steps of the currently loaded package.
+This interface lets a trusted pi host adapter (for example an unattended runtime adapter) run the same upgrade workflow as `/memory-upgrade`, without a console or dialog. It works in TUI, RPC, and host-managed headless runtimes kept alive for the operation. **No persona settings, step allowlist, or environment opt-in are required.** The explicit host `run` request supplies consent for all applicable steps of the currently loaded package.
 
 There is no automatic network update mechanism here. The host deploys the newest package, restarts/reloads pi, and requests an upgrade for that installed version. An old runtime cannot upgrade itself by naming a version it has not loaded. Startup inspection stays read-only; setup writes require separate user confirmation or an explicit host setup request. Setup alone never starts an agent turn or grants upgrade consent.
 
@@ -16,7 +16,7 @@ There is no automatic network update mechanism here. The host deploys the newest
 
 First establish a Git-backed bundle through provisioning or the separate **[setup protocol](setup.md)**. Provisioned TUI runtimes should use `OKF_SETUP_MODE=manual` to suppress startup dialogs; that setting grants no write authority. Setup and upgrade readiness/session bindings are independent.
 
-No new front-door Yono command or CRD is needed. `examples/managed-host.ts` demonstrates setup followed by a generic automatic upgrade host. It is **not auto-loaded** by this package. Loading it explicitly grants this maintenance behavior for the resolved agent-owned bundle.
+No host-platform command or schema is required by this protocol. `examples/managed-host.ts` demonstrates setup followed by a generic automatic upgrade host. It is **not auto-loaded** by this package. Loading it explicitly grants this maintenance behavior for the resolved agent-owned bundle.
 
 ## Transport and discovery
 
@@ -70,7 +70,13 @@ pi.events.emit("okf:upgrade:request", {
 
 This approves **all pending installed steps**, necessary upgrade-related repairs inside the agent-owned bundle, and the required local Git commit (including existing agent-owned bundle work). No interactive confirmation follows. There is no version/step-selection policy to configure.
 
-The managed prompt replaces interactive repair-plan approval with a transcript plan/checkpoint, followed by scoped work. It does **not** permit changes to external project files, new governance authority, fabricated verification or stale-review dates, pushes, Hub sync, credential changes, or arbitrary instruction replacement. If a fact or policy decision cannot be established, the agent calls `memory_upgrade(action="block", reason="...")`; the host receives a blocked outcome instead of an unattended question waiting forever.
+The managed prompt replaces interactive repair-plan approval with a transcript plan/checkpoint, followed by scoped work. In limited ownership it does **not** grant new governance authority; unresolved facts/policy become a structured `block`, not an unattended question. Configured full ownership instead grants scoped corpus/governance/lifecycle corrections: investigate, qualify or archive unsupported memory, and block only for genuinely unavailable external resources. Neither mode permits external project edits, fabricated human verification/review dates, pushes, Hub sync, credential changes or instruction replacement.
+
+For fully automatic repair/continuation rather than this host-managed foreground
+review, use [the maintenance adapter](maintenance.md) with full ownership and
+pi-session-maintenance. It persists tool-based recovery cases, budgets and retries.
+In full mode `/memory-upgrade` delegates to that coordinator without a dialog;
+`memory_upgrade` still cannot manufacture a managed run or bypass its step guards.
 
 A package-version change with no new steps re-verifies and commits an `application` receipt in the existing ledger. Old step records/timestamps are preserved and no LLM review is replayed. Legacy ledgers derive their adopted version from the last recorded step. An already adopted and committed version returns success without another commit or model turn. Stable numeric package downgrades and unknown/newer step state are refused.
 
@@ -105,7 +111,7 @@ A request has a 30-minute queue/review deadline and a 30-second dispatch-accepta
 
 To cancel, emit `action: "cancel"` with the current binding and `runId` of the active request. The cancellation request receives `cancel_requested`; watch the original run ID for its eventual terminal outcome. Pending work can cancel immediately; dispatched work retains its lock until idle/settled or runtime teardown. Changes, staging, and commits are not rolled back. The host can also inspect progress after a failure and request another run—recorded steps and Git-only retries do not repeat completed reviews.
 
-No GUI is needed for host-managed work. A one-shot `pi --print` may exit before a deferred job runs; use a persistent RPC/SDK/TUI lifecycle or otherwise keep the runtime alive until the terminal response. Runtime shutdown cancels the request rather than claiming it completed. The default interactive command still requires confirmation, and the model cannot grant itself a managed run through `memory_upgrade`.
+No GUI is needed for host-managed work. A one-shot `pi --print` may exit before a deferred job runs; use a persistent RPC/SDK/TUI lifecycle or otherwise keep the runtime alive until the terminal response. Runtime shutdown cancels the request rather than claiming it completed. The limited interactive command still requires confirmation; full ownership delegates the command to the automatic coordinator. The model cannot grant itself a managed run through `memory_upgrade`.
 
 ## Cross-runtime lock recovery
 
@@ -118,18 +124,18 @@ Run requests stamp `runtimeId` into their advisory bundle lock. After a crash/po
 
 The extension checks exact token/runtime correlation and refuses a demonstrably live local PID, an active review, or a non-idle runtime. It does not infer remote death from age or hostname differences. A replacement lock/token mismatch is refused. Legacy unstamped or malformed locks require separate inspection; there is no force-unlock request.
 
-The host's termination assertion is a **trust assumption**, not proof supplied by this package. An agent-controlled file or claimed display name cannot provide infrastructure-owned evidence. Never use this API as a reason to bypass Yono's actual runtime-termination checks.
+The host's termination assertion is a **trust assumption**, not proof supplied by this package. An agent-controlled file or claimed display name cannot provide infrastructure-owned evidence. Never use this API as a reason to bypass the host's actual runtime-termination checks.
 
 ## Assurance and integration checklist
 
-This API selects behavior inside an already trusted pi process. Event payloads, runtime IDs, the Git ledger, and `okf-upgrade-host` session entries are **cooperative** diagnostics, not authentication or tamper-proof audit. They add no network credentials or new external authority. Yono should record dispatch/outcomes through its own observation point with an attempt ID, sandbox/runtime identity, installed version, bundle, and returned commit or unresolved blocker; distinguish an observed report from independently verified storage state.
+This API selects behavior inside an already trusted pi process. Event payloads, runtime IDs, the Git ledger, and `okf-upgrade-host` session entries are **cooperative** diagnostics, not authentication or tamper-proof audit. They add no network credentials or new external authority. Hosts should record dispatch/outcomes through their own observation point with an attempt ID, sandbox/runtime identity, installed version, bundle, and returned commit or unresolved blocker; distinguish an observed report from independently verified storage state.
 
-For the separate Yono integration:
+For host integration:
 
 - Publish/pin this package and its native executable checksums; update image contract expectations.
 - Install a host adapter that requests the latest loaded version on readiness and knows how to coordinate hygiene.
 - Establish the intended agent-owned Git-backed bundle through provisioning or an explicit setup request, then request upgrades with fresh upgrade bindings. Provision identity/signing separately; this extension never invents identity.
 - Route blocked/stalled outcomes to existing monitoring/comm machinery with bounded retries.
-- Test against Yono's pinned pi and native Linux architectures, then a real unattended session with no attached operator.
+- Test against the host's deployed pi and native architectures, then a real unattended session with no attached operator.
 
-No Yono files or persona schema are changed by this package.
+Host-specific defaults, deployment files and persona schemas belong to the host, not this package.

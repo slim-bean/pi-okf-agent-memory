@@ -2,6 +2,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { Type } from "typebox";
 import { binaryVersion, requireCurrentContract, supportsCurrentContract } from "./okf.js";
 import { UpgradeRunner, type UpgradeStep } from "./upgrades.js";
+import { configuredOwnership } from "./ownership.js";
 import { registerManagedUpgrades, type ManagedHooks, type UpgradeSnapshot } from "./managed-upgrades.js";
 
 interface Options {
@@ -18,6 +19,7 @@ interface Options {
 export function registerUpgrades(pi: ExtensionAPI, options: Options) {
 	let active: UpgradeRunner | undefined;
 	let activeMode: "interactive" | "host" | undefined;
+	let fullAuthority = false;
 	let managed: ReturnType<typeof registerManagedUpgrades> | undefined;
 	let approvalGeneration = 0;
 	let interactiveApprovals = 0;
@@ -79,7 +81,7 @@ export function registerUpgrades(pi: ExtensionAPI, options: Options) {
 
 	function release() {
 		try { active?.release(); }
-		finally { active = undefined; activeMode = undefined; delivered = undefined; }
+		finally { active = undefined; activeMode = undefined; fullAuthority = false; delivered = undefined; }
 	}
 
 	function requireActive(ctx: ExtensionContext) {
@@ -94,7 +96,9 @@ export function registerUpgrades(pi: ExtensionAPI, options: Options) {
 		if (!next) return "All upgrade step checks are recorded, but the final Git commit is required before success. Review any Git blockers, then call memory_upgrade(action=\"finalize\"). The approved workflow includes a local commit of all non-ignored bundle changes, not a push. Do not claim completion until the runner returns a commit hash.";
 		const step = runner.status().pending[0].id;
 		if (delivered?.step !== step) delivered = { step, turn: modelTurn };
-		const consent = activeMode === "host"
+		const consent = fullAuthority
+			? "FULL AGENT MEMORY OWNERSHIP: this approved review has standing authority for scoped corpus/schema/governance/lifecycle repairs and the required local commit. No human will answer. Human approval clauses below are superseded: document evidence/checkpoints and proceed. Qualify or archive unsupported memory rather than blocking for facts or policy decisions. Preserve provenance; do not fabricate human verification or review dates. Do not change external project files, credentials, instructions or upgrade receipts, and do not push. Report a block only for a genuinely unavailable external resource/permission.\n"
+			: activeMode === "host"
 			? `HOST-MANAGED REVIEW (request ${managed?.requestId}): the host approved all pending upgrades for this installed package, including necessary upgrade-related repairs within this agent-owned bundle and the required local commit. No interactive user is waiting. For repair-plan approval clauses below, document the plan/checkpoint in the transcript and proceed within this scope; do not wait for a console answer. Do not change external project files, grant new governance authority, fabricate verification or review dates, push, sync, or replace instructions. If a step needs a policy decision or a fact you cannot establish, call memory_upgrade(action="block", reason="...") and report the blocker instead of inventing an answer.\n`
 			: "The user approved an upgrade review AND the required final local commit of the agent-owned knowledge bundle, not arbitrary corpus rewrites or a push.\n";
 		return consent + `Follow the package instructions below.\n` +
@@ -128,7 +132,7 @@ export function registerUpgrades(pi: ExtensionAPI, options: Options) {
 		let status = runner.status();
 		if (!status.finished) {
 			runner.acquire(runtimeId);
-			active = runner; activeMode = mode;
+			active = runner; activeMode = mode; fullAuthority = configuredOwnership(ctx.cwd) === "full";
 			status = runner.status();
 		}
 		if (status.finished) {
@@ -215,15 +219,22 @@ export function registerUpgrades(pi: ExtensionAPI, options: Options) {
 					report(ctx, "Upgrade review cancelled. Completed steps remain recorded; unfinished steps remain pending. Corpus edits, staging, and commits were not rolled back.");
 					return;
 				}
+				const full = configuredOwnership(ctx.cwd) === "full";
+				if (full && action === "review") {
+					const request: { protocol: 1; operation: string; result?: Promise<any> } = { protocol: 1, operation: "run" };
+					pi.events.emit("pi-session-maintenance:control:v1", request);
+					if (!request.result) throw new Error("Full ownership uses the autonomous maintenance coordinator. Load pi-session-maintenance or use the trusted okf:maintenance:v1 host adapter; no interactive approval is requested.");
+					const status = await request.result; report(ctx, status.admission ?? "Autonomous memory maintenance requested; inspect /maintenance status."); return;
+				}
 				// Recovery must work even when the binary or ledger is broken.
 				const runner = runnerFor(ctx.cwd);
 				if (!runner) throw new Error("No OKF bundle found. Run /memory-setup or request explicit host setup first.");
 				if (action === "unlock") {
 					const expected = runner.recoverableLock();
 					if (!expected) { report(ctx, "No upgrade lock exists."); return; }
-					if (!ctx.hasUI) throw new Error("Lock recovery requires interactive confirmation; nothing was changed.");
+					if (!full && !ctx.hasUI) throw new Error("Lock recovery requires interactive confirmation; nothing was changed.");
 					const generation = approvalGeneration;
-					if (await confirm(ctx, "Recover interrupted memory upgrade?", "The local lock owner has stopped. Remove only its lock? Completed steps and corpus files will be preserved.")) {
+					if (full || await confirm(ctx, "Recover interrupted memory upgrade?",  "The local lock owner has stopped. Remove only its lock? Completed steps and corpus files will be preserved.")) {
 						if (generation !== approvalGeneration || options.getBundle(ctx.cwd) !== runner.bundle) throw new Error("Session or bundle changed while awaiting recovery approval; retry.");
 						runner.unlock(expected);
 					}
@@ -290,7 +301,9 @@ export function registerUpgrades(pi: ExtensionAPI, options: Options) {
 					: "The host has queued an upgrade for a safe idle window. Continue the current task; do not invoke the upgrade command yourself or ask for a console confirmation."
 			: active && active.bundle === options.getBundle(ctx.cwd)
 				? "An upgrade review is approved in this session; use memory_upgrade(action=\"next\") if its current instructions are missing."
-				: "Do not begin upgrades or edit their ledger autonomously. Normal read-only memory tools remain available; ask the user to run /memory-upgrade when convenient.";
+				: configuredOwnership(ctx.cwd) === "full"
+					? "Full agent memory ownership is configured. The session-maintenance coordinator owns automatic upgrades and repair at safe idle. Continue the current task without asking for human approval; never race its bundle lock or edit upgrade receipts yourself."
+					: "Do not begin upgrades or edit their ledger autonomously. Normal read-only memory tools remain available; ask the user to run /memory-upgrade when convenient.";
 		return { message: {
 			customType: "okf-upgrade-status", display: false,
 			content: `${notice}\n${guidance}`,

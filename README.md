@@ -33,13 +33,19 @@ Prebuilt binaries support macOS/Linux on arm64/amd64; no build step or database 
 
 Git is required. On the first TUI session, accept the setup prompt (or run `/memory-setup`) to create an empty bundle and initialize Git inside it if no enclosing worktree exists. Package installation itself does not create project data. Setup never invents identity, commits, pushes, or approves upgrades; `/memory-upgrade` is the separate review/commit step.
 
-RPC/headless startup never opens unsolicited dialogs. For provisioned TUI sessions without an operator, set `OKF_SETUP_MODE=manual` and provision the bundle or authorize the host setup protocol. See **[Setup and unattended provisioning](docs/setup.md)**, including Yono deployment notes.
+RPC/headless startup never opens unsolicited dialogs. For provisioned TUI sessions without an operator, set `OKF_SETUP_MODE=manual` and provision the bundle or authorize the host setup protocol. See **[Setup and unattended provisioning](docs/setup.md)** for host integration.
 
 Optional environment variables:
 
 - `OKF_BIN`: explicit executable path (`~` expands to HOME; relative paths resolve from the session workspace; invalid overrides fail rather than silently falling back). Otherwise: host-matched package binary → legacy `bin/okf` → PATH.
 - `OKF_KNOWLEDGE_DIR`: explicit bundle path, relative to the session working directory if not absolute. Otherwise: `<cwd>/knowledge`, then an existing `/workspace/knowledge` only for `/workspace`-rooted deployments. Missing bundles are created at `<cwd>/knowledge` unless overridden.
 - `OKF_SETUP_MODE`: `prompt` (default: offer setup at TUI startup) or `manual` (no startup dialogs, including TUI). Neither value authorizes unattended writes.
+- `PI_MEMORY_OWNERSHIP`: `limited` or `full` maintenance authority. Explicit
+  workspace/host ownership takes precedence, then this environment setting;
+  otherwise ownership defaults to limited everywhere. Hosts opt into full
+  explicitly; no deployment detection changes authority.
+  This is configuration, not authentication. Full delegates shell-capable recovery
+  with the process's existing permissions; use full-process isolation.
 - `OKF_ORPHAN_POLICY`: `advisory` (default) or `strict`. Advisory allows independent
   concepts without invented semantic relationships; strict requires no isolated
   concepts (not necessarily one connected graph). Applies to validation and finalization.
@@ -127,7 +133,7 @@ Normal read tools remain available during this compatible review; unsupported pa
 
 In print/JSON mode, pending status is supplied to the model and available through `memory_upgrade(action="status")`. The interactive command still requires confirmation; a trusted host can instead request an unattended review through the managed interface below. RPC receives supported notifications/dialogs, not TUI widgets.
 
-## Autonomous hosts (Yono and similar harnesses)
+## Autonomous hosts
 
 A host adapter can use the versioned `pi.events` protocol to inspect and run upgrades without typing a slash command or answering a dialog. **No persona configuration or step allowlist is needed:** a host `run` request approves every pending step of the installed package and the required final local commit.
 
@@ -136,7 +142,7 @@ A host adapter can use the versioned `pi.events` protocol to inspect and run upg
 - The extension waits for idle/no queued messages/no unresolved tools. Hosts can hold the slot for other maintenance and observe its active state to defer hygiene.
 - The agent gets the same ordered guides, with host consent for necessary scoped repairs. Unknown policy/factual decisions become an explicit `block`, not an unattended console question.
 - Completion is reported structurally **after the agent settles**, with the verified commit hash. Failures stay pending; there is no autonomous retry loop or process kill.
-- Version-only updates re-verify and commit an adoption receipt without repeating old guides. Already-current requests are no-ops. Yono owns deploying the newest package and restarting/reloading pi; this package never downloads updates itself.
+- Version-only updates re-verify and commit an adoption receipt without repeating old guides. Already-current requests are no-ops. The host owns deploying the newest package and restarting/reloading pi; this package never downloads updates itself.
 
 See **[Managed upgrade protocol](docs/managed-upgrades.md)** for request/response types, lifecycle, maintenance coordination, deadlines, and host-attested crash recovery. **[Example automatic host](examples/managed-host.ts)** shows setup followed by startup/version-change upgrade triggering and is not auto-loaded by the package. This is an in-process cooperative integration, not a new security boundary or authoritative infrastructure audit.
 
@@ -148,7 +154,38 @@ package's `okf:maintenance:v1` adapter; normal OKF startup still starts no work.
 Review calls use the existing model registry, not authenticated pi subprocesses.
 Warranted concept addenda are applied through the CLI, validated, and **committed
 automatically**. Configured upstream pushes are separate retryable operations.
-Missing bundles/Git identity are diagnosed, never fabricated. Updated coordinators
+Default (`limited`) validation failures trigger **automatic structural repair** under the same bundle
+lock: index listings/descriptions are restored from concept metadata, and a
+bounded tool-free model can retarget broken Markdown links to evidenced existing
+concepts. Repair checkpoints survive interruption and failed commits; extraction
+plans are retained rather than paid for again. Repairs never change facts,
+frontmatter, governance, review dates or orphan policy. Findings requiring missing
+factual evidence or external Git/auth setup remain explicit blockers. No normal
+repair approval or foreground delegation is required.
+
+**Full ownership** (`memoryOwnership:"full"` in `.pi/maintenance.json`/host settings,
+or `PI_MEMORY_OWNERSHIP=full`) also investigates schema,
+provenance, governance and stale-fact problems with read/edit/write/shell tools.
+It qualifies or archives unsupported claims instead of asking a human, provisions
+missing bundles/Git, restores owner-only file access, and repairs scoped Git failures.
+Cases/checkpoints survive cancellation; budget/turn limits cause automatic continuation,
+not approval requests. Tool-based source reviews can handle failed extraction or
+oversized corpora, with source-hash binding and actual validation/commit checks.
+Corpus-content fingerprints and daily health checks catch failures even with fresh
+session coverage. Optional `memoryGitIdentity:{name,email}` is an explicit authorized
+repository-local identity; it is not invented by the agent. Incompatible runtimes,
+missing credentials/mounts or unrelated project Git operations remain structured
+host prerequisites. Full startup offers no setup dialog; `/memory-setup` uses standing
+authority and `/memory-upgrade` delegates to the maintenance coordinator.
+
+Full shell scope is cooperative, not a filesystem sandbox, and does not inherit
+foreground tool overrides/approval extensions. It has the process's practical
+filesystem/network/credential access. These private worker logs are not
+infrastructure-authenticated audit. Hosts must deploy/load both updated packages,
+explicitly configure their ownership/compaction defaults, and coordinate any old
+independent hygiene loop. Installing this checkout does not update host deployments.
+Limited mode diagnoses missing bundles; full mode provisions them. Unavailable
+credentials/author identity are diagnosed, never fabricated. Updated coordinators
 can capture parsed prompt/stream/final-response events and plan/validation/commit
 references through optional `onModelEvent`/`onEvent` callbacks. No HTTP credentials
 or new agent sessions are exposed; the coordinator owns private transcripts and UI.
@@ -187,6 +224,12 @@ Vendoring verifies all four release assets against upstream SHA-256 checksums be
 - `lib/managed-upgrades.ts`: host protocol, idle scheduling, maintenance coordination and outcomes.
 - `lib/maintenance.ts` / `lib/maintenance-git.ts`: optional host-driven tool-free
   snapshot reviews/upgrades, automatic bundle commits, and configured upstream pushes.
+- `lib/maintenance-repair.ts`: checkpointed automatic index/link repair before
+  validation/commit; bounded model proposals, source guards and conflict recovery.
+- `lib/autonomous-recovery.ts` / `lib/maintenance-model.ts`: full-ownership tool
+  worker, durable cases/checkpoints, native registry streams, accounting and aborts.
+- `lib/ownership.ts` / `lib/owned-access.ts` / `lib/maintenance-fingerprint.ts`:
+  explicit/provisioned policy, metadata-only owned-access recovery and corpus health.
 - `skills/okf-memory-upgrade/`: portable upgrade workflow and historical steps.
 
 Keep step IDs stable and append new steps only for actual upgrade work, not every release. Retain old guides and keep their verifiers compatible with the newest supported binary. Keep verifiers read-only and repeatable: finalization rechecks them before and after the commit. Test fresh/legacy/provisioned setup, broken Git metadata, stale consent, skipped releases, commit failures/retries, unrelated staging, cancellation, concurrent sessions, and missing/corrupt state. Never infer completion from a release number or a notice being dismissed.

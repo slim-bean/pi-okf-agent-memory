@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { existsSync, lstatSync, mkdirSync, readdirSync, realpathSync, rmdirSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmdirSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { git, gitEnv } from "./git.js";
 import { requireCurrentContract, resolveKnowledgeDir, runOkf, validateBundle } from "./okf.js";
@@ -59,7 +59,7 @@ function repository(path: string): string | null {
 	return null;
 }
 
-export function inspectSetup(cwd: string): SetupStatus {
+export function inspectSetup(cwd: string, ownedUpgradeToken?: string): SetupStatus {
 	let bundle = resolve(cwd, process.env.OKF_KNOWLEDGE_DIR || "knowledge");
 	let createBundle = false, initGit = false, root: string | null = null;
 	let error: string | undefined;
@@ -73,24 +73,28 @@ export function inspectSetup(cwd: string): SetupStatus {
 		}
 		root = repository(bundle);
 		initGit = root === null;
-		if ((createBundle || initGit) && stat(join(bundle, ".pi-okf-memory", "lock.json"))) throw new Error("An upgrade lock exists. Stop/recover that review before setup; do not initialize Git under a running writer.");
+		const upgradeLock = join(bundle, ".pi-okf-memory", "lock.json");
+		if ((createBundle || initGit) && stat(upgradeLock)) {
+			const owns = ownedUpgradeToken && !lstatSync(upgradeLock).isSymbolicLink() && JSON.parse(readFileSync(upgradeLock, "utf8")).token === ownedUpgradeToken;
+			if (!owns) throw new Error("An upgrade lock exists. Stop/recover that review before setup; do not initialize Git under a running writer.");
+		}
 	} catch (err) { error = err instanceof Error ? err.message : String(err); }
 	const phase = error ? "blocked" : createBundle || initGit ? "needed" : "ready";
 	const planId = createHash("sha256").update(JSON.stringify([bundle, phase, createBundle, initGit, root, error])).digest("hex");
 	return { bundle, phase, createBundle, initGit, repository: root, planId, ...(error ? { error } : {}) };
 }
 
-export function requireSetup(cwd: string): SetupStatus {
-	const status = inspectSetup(cwd);
+export function requireSetup(cwd: string, ownedUpgradeToken?: string): SetupStatus {
+	const status = inspectSetup(cwd, ownedUpgradeToken);
 	if (status.phase !== "ready") throw new Error(`Memory setup ${status.phase} for ${status.bundle}. ${status.error ?? "A Git-backed knowledge bundle is required."} Run /memory-setup or request host setup before upgrading.`);
 	return status;
 }
 
 /** Explicit caller consent only. No commits, identity/config edits, remotes,
  * pushes, adoption receipts, or content changes to an existing bundle. */
-export function setupBundle(cwd: string, binary: string, approved: SetupStatus): SetupStatus {
+export function setupBundle(cwd: string, binary: string, approved: SetupStatus, ownedUpgradeToken?: string): SetupStatus {
 	const check = () => {
-		const current = inspectSetup(cwd);
+		const current = inspectSetup(cwd, ownedUpgradeToken);
 		if (current.bundle !== approved.bundle || current.planId !== approved.planId) throw new Error("Setup plan changed; inspect again and obtain fresh approval.");
 		if (current.phase === "blocked") throw new Error(current.error);
 		return current;
@@ -114,6 +118,6 @@ export function setupBundle(cwd: string, binary: string, approved: SetupStatus):
 		const root = repository(plan.bundle);
 		if (root !== plan.repository) throw new Error("Git layout changed during setup. Inspect and retry; no Git repository was initialized by this attempt.");
 		if (plan.initGit) git(plan.bundle, ["init", "--quiet"]);
-		return requireSetup(cwd);
+		return requireSetup(cwd, ownedUpgradeToken);
 	} finally { rmdirSync(lock); }
 }

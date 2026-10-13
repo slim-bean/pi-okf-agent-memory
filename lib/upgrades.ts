@@ -144,8 +144,7 @@ export class UpgradeRunner {
 		};
 	}
 
-	acquire(runtimeId?: string) {
-		this.readState();
+	acquire(runtimeId?: string, recoverState?: (error: unknown) => void) {
 		if (this.token) { this.assertOwnership(); return; }
 		mkdirSync(this.stateDir, { recursive: true, mode: 0o700 });
 		this.checkPaths();
@@ -165,6 +164,10 @@ export class UpgradeRunner {
 		} finally { closeSync(fd); }
 		this.token = token;
 		try {
+			try { this.readState(); } catch (error) {
+				if (!recoverState) throw error;
+				recoverState(error); this.readState();
+			}
 			// Keep the portable completion ledger, not process-local locks, in Git.
 			const ignore = join(this.stateDir, ".gitignore");
 			const previous = existsSync(ignore) ? readFileSync(ignore, "utf8") : "";

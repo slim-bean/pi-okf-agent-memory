@@ -4,7 +4,14 @@ Memory needs a knowledge bundle in a usable Git worktree. `pi install` installs 
 
 ## Interactive use
 
-In TUI mode, startup offers **Set up Git-backed memory?** once per bundle per extension runtime. Declining leaves the filesystem unchanged. Use `/memory-setup` to try again; `/memory-setup status` is read-only.
+In limited TUI mode, startup offers **Set up Git-backed memory?** once per bundle per extension runtime. Declining leaves the filesystem unchanged. Use `/memory-setup` to try again; `/memory-setup status` is read-only.
+
+Configured **full memory ownership** suppresses startup offers, including TUI. The
+session-maintenance coordinator owns automatic setup/repair/upgrades at safe idle;
+explicit `/memory-setup` uses standing authority without a confirmation dialog.
+Startup/status still never write or start a model turn. Full ownership is selected
+through workspace/host `memoryOwnership` or `PI_MEMORY_OWNERSHIP`; it defaults to
+limited everywhere. See [unattended maintenance](maintenance.md).
 
 With explicit confirmation, deterministic extension code:
 
@@ -23,7 +30,7 @@ Paths follow the normal resolver: explicit `OKF_KNOWLEDGE_DIR` (relative to sess
 
 **No unsolicited dialogs in RPC, JSON, or print mode**, even though RPC reports `hasUI: true`. An operator may explicitly invoke `/memory-setup` through an RPC client that implements confirmations. Do not auto-answer dialogs to manufacture host consent.
 
-For a provisioned **TUI** runtime without an attached operator (such as Yono's pi launcher), set:
+For a provisioned **TUI** runtime without an attached operator, set:
 
 ```bash
 export OKF_SETUP_MODE=manual
@@ -109,16 +116,25 @@ OKF_SETUP_MODE=manual pi \
 
 The adapter/event bus and `okf-setup-host` transcript receipts are **COOPERATIVE** diagnostics in a trusted process, not authenticated host identity or tamper-proof infrastructure audit. A host requiring **OBSERVED** records must record its own request/runtime/path/version and returned or unresolved outcome outside agent-controlled storage. A transcript append failure is warned about but cannot roll back filesystem setup.
 
-## Yono integration notes
+## Host integration checklist
 
-Inspected against `~/projects/yono-worktree/main/`:
+Host-specific provisioning, defaults and deployment policies belong in the host,
+not these extensions:
 
-- `images/features/pi/yono-pi-start.sh` currently bootstraps missing knowledge files with `okf init` and leaves existing bundles untouched. It does **not** initialize Git. This package's setup handles those existing bundles without rewriting content.
-- The launcher executes TUI pi, even when no operator is attached. Provision `OKF_SETUP_MODE=manual`; do not rely only on `ctx.hasUI` to decide whether someone can answer a dialog.
-- Set `OKF_KNOWLEDGE_DIR` consistently with `YONO_WORKSPACE_PATH` and the hygiene resolver, especially for a non-default workspace. Do not accidentally create separate bundles for subdirectory sessions.
-- Deploy/pin the new package and native binaries through `deps.yaml`, `images/features/pi/install-extensions.sh`, and the image contract in `okf-agent-memory-contract.mjs`. This checkout does not update Yono's deployment pins.
-- Load a Yono-owned adapter (or explicitly opt into the example) to perform setup first, then managed upgrades. Coordinate `yono-context-hygiene-ext.ts` using upgrade hold/maintenance events so compaction/review and upgrades don't overlap. Existing Yono hygiene does not automatically implement this protocol.
-- Preserve Git state with the bundle and provision real author/signing configuration. No fake sandbox identity is supplied by this extension.
-- Use Yono's infrastructure runtime identity and failure reporting; event-bus/transcript labels alone are not authoritative audit or termination proof.
+- Set a stable `OKF_KNOWLEDGE_DIR` for persistent storage; preserve the bundle and
+  Git state across runtime replacement. Subdirectory sessions should not accidentally
+  create separate bundles.
+- Enable full ownership explicitly through generic workspace/host settings or
+  `PI_MEMORY_OWNERSHIP=full`. Use `OKF_SETUP_MODE=manual` independently to suppress
+  limited-mode startup offers when no operator can respond.
+- Deploy compatible packages/native binaries, and load pi-session-maintenance or
+  a trusted adapter. Disable/coordinate other independent hygiene schedulers.
+- Provision authorized author/signing configuration; these extensions do not invent
+  identities, credentials or publication destinations.
+- Record runtime identity/outcomes at the host's observation point; event-bus and
+  transcript labels are not authenticated audit or termination proof.
+- Test the actual deployed runtime/native architectures and an unattended session.
+  Local package tests are not a substitute for deployment acceptance.
 
-No Yono source/deployment is modified here. The local-copy installer now installs resources only and uses this same session-time setup flow instead of a separate shell bootstrap that invented identity/commits. Validate Yono's native Linux image contract and an unattended sandbox after integrating the adapter; local package/RPC tests are not a substitute for that deployment test.
+The installer copies resources only; host images, schemas and deployment pins are
+not modified by these packages.

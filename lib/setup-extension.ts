@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { idleBlocker } from "./managed-upgrades.js";
 import { inspectSetup, requireSetup, setupBundle, type SetupStatus } from "./setup.js";
+import { configuredOwnership } from "./ownership.js";
 
 export const SETUP_HOST = { ready: "okf:setup:ready", request: "okf:setup:request", response: "okf:setup:response" } as const;
 export type SetupHostRequest = { protocol: 1; id: string } & (
@@ -54,13 +55,14 @@ export function registerSetup(pi: ExtensionAPI, options: Options) {
 	async function interactive(context: ExtensionContext) {
 		if (active || busy(context)) throw new Error("Memory setup requires idle with no other memory maintenance. Retry /memory-setup when idle.");
 		const plan = refresh(context);
+		const full = configuredOwnership(context.cwd) === "full";
 		if (plan.phase === "blocked") throw new Error(plan.error);
-		if (plan.phase === "ready") { report(context, `Memory setup ready: ${plan.bundle} (Git worktree ${plan.repository}). Upgrades remain a separate /memory-upgrade approval.`); return; }
-		if (!context.hasUI) throw new Error("No interactive UI. Use the explicit okf:setup host protocol or provision the bundle before launching pi.");
+		if (plan.phase === "ready") { report(context, `Memory setup ready: ${plan.bundle} (Git worktree ${plan.repository}). ${full ? "Full-ownership maintenance handles pending upgrades without human approval." : "Upgrades remain a separate /memory-upgrade approval."}`); return; }
+		if (!full && !context.hasUI) throw new Error("No interactive UI. Use the explicit okf:setup host protocol or provision the bundle before launching pi.");
 		const binding = session;
 		active = true;
 		try {
-			const approved = await context.ui.confirm("Set up Git-backed memory?", [
+			const approved = full || await context.ui.confirm("Set up Git-backed memory?", [
 				`Bundle: ${plan.bundle}`,
 				plan.createBundle ? "Create an empty OKF knowledge bundle." : "Preserve all existing knowledge files.",
 				plan.initGit ? `Initialize Git inside ${plan.bundle} only; do not turn the parent project into a repository.` : `Use existing Git worktree: ${plan.repository}. No nested repository will be created.`,
@@ -70,7 +72,7 @@ export function registerSetup(pi: ExtensionAPI, options: Options) {
 			if (binding !== session || busy(context)) throw new Error("Session or activity changed during setup approval. Retry /memory-setup.");
 			const status = setupBundle(context.cwd, options.getBinary(), plan);
 			options.onReady?.(context);
-			report(context, `Memory setup complete: ${status.bundle} (Git worktree ${status.repository}). Run /memory-upgrade to review and commit the baseline; setup did not approve upgrades or make a commit.`);
+			report(context, `Memory setup complete: ${status.bundle} (Git worktree ${status.repository}). ${full ? "Full-ownership maintenance will review and commit the baseline automatically; setup itself made no commit." : "Run /memory-upgrade to review and commit the baseline; setup did not approve upgrades or make a commit."}`);
 		} finally { if (binding === session) { active = false; refresh(context); } }
 	}
 	function receive(raw: unknown) {
@@ -132,7 +134,7 @@ export function registerSetup(pi: ExtensionAPI, options: Options) {
 		// manual also supports provisioned TUI sessions with no attached operator.
 		const mode = process.env.OKF_SETUP_MODE ?? "prompt";
 		if (!["prompt", "manual"].includes(mode)) { report(context, "Invalid OKF_SETUP_MODE; use prompt or manual. Startup setup was not attempted.", true); return; }
-		if (mode === "manual" || context.mode !== "tui" || !context.hasUI || status.phase !== "needed" || prompted.has(status.bundle) || busy(context)) return;
+		if (configuredOwnership(context.cwd) === "full" || mode === "manual" || context.mode !== "tui" || !context.hasUI || status.phase !== "needed" || prompted.has(status.bundle) || busy(context)) return;
 		prompted.add(status.bundle);
 		try { await interactive(context); }
 		catch (err) { report(context, messageOf(err), true); }
@@ -140,7 +142,9 @@ export function registerSetup(pi: ExtensionAPI, options: Options) {
 	pi.on("before_agent_start", (_event, context) => {
 		const status = refresh(context);
 		if (status.phase !== "ready") return { message: { customType: "okf-setup-status", display: false,
-			content: `Memory setup ${status.phase} at ${status.bundle}: ${status.error ?? "Git-backed bundle required"}. Ask for /memory-setup or explicit host setup. Do not initialize memory or Git autonomously. No setup/upgrade consent is inferred from this notice.` } };
+			content: configuredOwnership(context.cwd) === "full"
+				? `Memory setup ${status.phase} at ${status.bundle}: ${status.error ?? "Git-backed bundle required"}. Full agent ownership is configured. The session-maintenance coordinator owns automatic setup/recovery at safe idle; no human approval or console answer is expected. Do not race another memory writer.`
+				: `Memory setup ${status.phase} at ${status.bundle}: ${status.error ?? "Git-backed bundle required"}. Ask for /memory-setup or explicit host setup. Do not initialize memory or Git autonomously. No setup/upgrade consent is inferred from this notice.` } };
 	});
 	pi.on("session_shutdown", () => { session = null; ctx = undefined; active = false; history.clear(); unsubscribe?.(); unsubscribe = undefined; });
 	return { get active() { return active; }, requireReady: requireSetup };

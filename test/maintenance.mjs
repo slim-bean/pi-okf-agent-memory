@@ -28,7 +28,8 @@ function fixture() {
   h.ctx.model=model;
   h.ctx.modelRegistry={find:()=>model,hasConfiguredAuth:()=>true,streamSimple(_model,input) {
     calls++; assert.match(input.systemPrompt,/UNTRUSTED/);
-    const result={role:'assistant',api:'openai-responses',provider:'fake',model:'offline',timestamp:Date.now(),stopReason:'stop',content:[{type:'text',text:JSON.stringify(response)}],usage:{cost:{total:0.01}}};
+    const value=typeof response==='function'?response(input,calls):response;
+    const result={role:'assistant',api:'openai-responses',provider:'fake',model:'offline',timestamp:Date.now(),stopReason:'stop',content:[{type:'text',text:JSON.stringify(value)}],usage:{cost:{total:0.01}}};
     return {async *[Symbol.asyncIterator](){yield {type:'text_delta',delta:result.content[0].text};},result:async()=>result};
   }};
   const entries=[{index:1,id:'a',parentId:null,timestampMs:1,role:'user',text:'Persist the rationale for isolated test profiles.'}];
@@ -126,6 +127,8 @@ test('orphan-only blocked plans resume validation and commit without another ext
     delete process.env.OKF_ORPHAN_POLICY;
     await f.run('upgrade');
     for(const id of ['independent-one','independent-two']) cli('create',id,f.bundle,'--title',id,'--desc','An independent topic.','--body','Unrelated durable rationale.');
+    let guards=0;
+    await assert.rejects(f.run('review',{assertSource(){if(++guards>=3)throw new Error('source changed')}}),/source changed/); // retain an extraction checkpoint
     process.env.OKF_ORPHAN_POLICY='strict';
     const strictKey=(await f.run('status')).key;
     await assert.rejects(f.run('review'),e=>e.kind==='blocked'&&e.code==='memory-validation'&&e.resource===realpathSync(f.bundle));
@@ -164,4 +167,133 @@ test('malformed proposals and outside-entry references cannot mutate the bundle'
     await assert.rejects(f.run('review'),/cite entries/);
     assert.equal(git(f.bundle,'rev-parse','HEAD'),before);
   } finally {f.close()}
+});
+
+const correction = (file='one.md', from='[target](wrong.md)', target='two.md') => ({repairs:[{file,from,target,reason:'The label and surrounding text identify the existing target concept.'}]});
+function seedLinks(f) {
+  cli('create','two',f.bundle,'--title','Target','--desc','Existing target rationale.','--body','Durable target evidence.');
+  cli('create','one',f.bundle,'--title','Source','--desc','Refers to the target.','--body','See [target](wrong.md) for the rationale.');
+}
+
+test('index discoverability and description drift repair automatically without a repair model call',async()=>{
+  const f=fixture();const operations=[];
+  try {
+    await f.run('upgrade');
+    cli('create','decisions/nested/one',f.bundle,'--title','Nested rationale','--desc','Authoritative description.','--body','Durable rationale.');
+    const index=join(f.bundle,'decisions/nested/index.md');
+    writeFileSync(index,readFileSync(index,'utf8').replace('Authoritative description.','Outdated description.'));
+    writeFileSync(join(f.bundle,'index.md'),'# Knowledge\n\nKeep this navigation prose.\n');
+    const calls=f.calls;
+    const result=await f.run('review',{onEvent:(type,detail)=>operations.push({type,detail})});
+    assert.equal(result.complete,false); assert.equal(f.calls,calls); // deterministic repair needs no model
+    assert.equal((await f.run('review')).complete,true); assert.equal(f.calls,calls+1); // extraction follows
+    assert.match(readFileSync(index,'utf8'),/Authoritative description/);
+    assert.match(readFileSync(join(f.bundle,'index.md'),'utf8'),/Keep this navigation prose/);
+    assert.match(readFileSync(join(f.bundle,'index.md'),'utf8'),/decisions\/index.md/);
+    assert.ok(operations.some(e=>e.type==='repair'));
+    assert.equal(git(f.bundle,'status','--porcelain'),'');
+  }finally{f.close()}
+});
+
+test('broken links repair under the bundle lease, commit, then yield before extraction',async()=>{
+  const f=fixture();const events=[];
+  try {
+    await f.run('upgrade');seedLinks(f);
+    const original=readFileSync(join(f.bundle,'one.md'),'utf8');
+    f.response=input=>{ assert.match(input.systemPrompt,/repairs/);assert.match(input.messages[0].content,/broken_links/); return correction(); };
+    const calls=f.calls;
+    const repaired=await f.run('review',{onEvent:(type,detail)=>events.push({type,detail})});
+    assert.equal(repaired.complete,false);assert.equal(repaired.detail.repaired,true);assert.equal(f.calls,calls+1);
+    assert.equal(readFileSync(join(f.bundle,'one.md'),'utf8'),original.replace('(wrong.md)','(two.md)'));
+    assert.equal(git(f.bundle,'status','--porcelain'),'');assert.ok(events.some(e=>e.type==='repair'));
+    f.response={reviewed:true,changes:[]};
+    assert.equal((await f.run('review')).complete,true);assert.equal(f.calls,calls+2);
+  }finally{f.close()}
+});
+
+test('a broken link introduced by extraction queues repair and resumes the same evidence checkpoint',async()=>{
+  const f=fixture();
+  try {
+    await f.run('upgrade');
+    cli('create','two',f.bundle,'--title','Target','--desc','Existing target.','--body','Durable evidence.');
+    f.response={reviewed:true,changes:[{concept:'one',title:'Source',description:'Target rationale.',body:'Because of [target](wrong.md).',entries:[1]}]};
+    const calls=f.calls;
+    await assert.rejects(f.run('review'),e=>e.kind==='deferred'&&e.code==='memory-repair-pending');
+    assert.equal(f.calls,calls+1);
+    f.response=correction();assert.equal((await f.run('review')).complete,false);assert.equal(f.calls,calls+2);
+    assert.equal((await f.run('review')).complete,true);assert.equal(f.calls,calls+2); // no repeated extraction or repair
+    const text=readFileSync(join(f.bundle,'one.md'),'utf8');
+    assert.equal(text.match(/## Session evidence/g).length,1);assert.match(text,/\[target\]\(two.md\)/);
+    assert.equal(git(f.bundle,'status','--porcelain'),'');
+  }finally{f.close()}
+});
+
+test('unsafe repair proposals cannot alter facts, frontmatter, held concepts or valid links; paid attempts are bounded',async()=>{
+  const f=fixture();
+  try {
+    await f.run('upgrade');seedLinks(f);
+    const original=readFileSync(join(f.bundle,'one.md'),'utf8');const head=git(f.bundle,'rev-parse','HEAD');const calls=f.calls;
+    f.response=correction('one.md','Durable target evidence.','two.md');
+    await assert.rejects(f.run('review'),e=>e.code==='memory-validation'&&e.detail.repair.status==='retryable');
+    f.response=correction('one.md','[target](wrong.md)','../../outside.md');
+    await assert.rejects(f.run('review'),e=>e.code==='memory-validation'&&e.detail.repair.attempts===2);
+    await assert.rejects(f.run('review'),/Two repair proposals/);assert.equal(f.calls,calls+2);
+    assert.equal(readFileSync(join(f.bundle,'one.md'),'utf8'),original);assert.equal(git(f.bundle,'rev-parse','HEAD'),head);
+    writeFileSync(join(f.bundle,'one.md'),original.replace('---\n','---\ngovernance: hold\n'));
+    f.response=correction();
+    await assert.rejects(f.run('review'),/held\/human-verified/);
+    assert.match(readFileSync(join(f.bundle,'one.md'),'utf8'),/wrong.md/);
+  }finally{f.close()}
+});
+
+test('repair checks source freshness after model output and replays its checkpoint without another call',async()=>{
+  const f=fixture();let fresh=true;
+  try {
+    await f.run('upgrade');seedLinks(f);const original=readFileSync(join(f.bundle,'one.md'),'utf8');
+    f.response=()=>{fresh=false;return correction()};const calls=f.calls;
+    await assert.rejects(f.run('review',{assertSource(){if(!fresh)throw new Error('source changed')}}),/source changed/);
+    assert.equal(readFileSync(join(f.bundle,'one.md'),'utf8'),original);
+    fresh=true;f.response={reviewed:true,changes:[]};
+    assert.equal((await f.run('review')).complete,false);assert.equal(f.calls,calls+1); // checkpoint repair finalized, no new call
+    assert.equal((await f.run('review')).complete,true);assert.equal(f.calls,calls+2); // first extraction
+    assert.match(readFileSync(join(f.bundle,'one.md'),'utf8'),/two.md/);
+  }finally{f.close()}
+});
+
+test('failed repair commit retries without a second repair proposal',async()=>{
+  const f=fixture();
+  try {
+    await f.run('upgrade');seedLinks(f);f.response=correction();
+    const hook=join(f.bundle,'.git/hooks/pre-commit');writeFileSync(hook,'#!/bin/sh\nexit 1\n');chmodSync(hook,0o700);
+    await assert.rejects(f.run('review'),/git commit failed/);const calls=f.calls;
+    unlinkSync(hook);f.response={reviewed:true,changes:[]};
+    assert.equal((await f.run('review')).complete,false);assert.equal(f.calls,calls); // finalization only
+    assert.equal((await f.run('review')).complete,true);assert.equal(f.calls,calls+1); // first extraction, no second repair
+    assert.equal(git(f.bundle,'status','--porcelain'),'');
+  }finally{f.close()}
+});
+
+test('a stale repair checkpoint preserves foreground changes and automatically replans',async()=>{
+  const f=fixture();let fresh=true;
+  try {
+    await f.run('upgrade');seedLinks(f);
+    f.response=()=>{fresh=false;return correction()};
+    await assert.rejects(f.run('review',{assertSource(){if(!fresh)throw new Error('source changed')}}),/source changed/);
+    const path=join(f.bundle,'one.md');const changed=readFileSync(path,'utf8')+'\nForeground rationale must survive.\n';writeFileSync(path,changed);
+    fresh=true;const calls=f.calls;
+    await assert.rejects(f.run('review'),e=>e.kind==='deferred'&&e.code==='memory-repair-conflict');
+    assert.equal(readFileSync(path,'utf8'),changed);assert.equal(f.calls,calls);
+    f.response=correction();const result=await f.run('review');assert.equal(result.complete,false);assert.equal(f.calls,calls+1);
+    assert.equal(readFileSync(path,'utf8'),changed.replace('(wrong.md)','(two.md)'));
+  }finally{f.close()}
+});
+
+test('cancellation delivered by a validation observer prevents repair commit',async()=>{
+  const f=fixture();const parent=new AbortController();
+  try {
+    await f.run('upgrade');seedLinks(f);f.response=correction();const head=git(f.bundle,'rev-parse','HEAD');
+    await assert.rejects(f.run('review',{signal:parent.signal,onEvent(type,detail){if(type==='validation'&&detail.ok)parent.abort(new Error('Foreground activity'));}}),/Foreground activity/);
+    assert.equal(git(f.bundle,'rev-parse','HEAD'),head);const calls=f.calls;
+    const result=await f.run('review');assert.equal(result.complete,false);assert.equal(f.calls,calls); // validated repair commit only
+  }finally{f.close()}
 });
