@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, writeFileSync, rmSync, readdirSync, existsSync, realpathSync, chmodSync, statSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync, appendFileSync, rmSync, readdirSync, existsSync, realpathSync, chmodSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -202,7 +202,11 @@ test('malformed extraction falls back to a tool-based review bound to the curren
 test('full ownership can finish an oversized-corpus review incrementally without deleting valid memory',async()=>{
   const f=fixture();
   try {
-    await f.run('upgrade');cli('create','large',f.bundle,'--title','Large historical evidence','--desc','Preserve historical evidence.','--body','A retained historical line.\n'.repeat(8000));
+    await f.run('upgrade');cli('create','large',f.bundle,'--title','Large historical evidence','--desc','Preserve historical evidence.','--body','A retained historical line.');
+    // Grow the body on disk: Linux caps ONE argv string at 128 KiB
+    // (MAX_ARG_STRLEN), so a 224 KB --body fails with E2BIG there (macOS has no
+    // per-argument limit). The oversized-corpus scenario is unchanged.
+    appendFileSync(join(f.bundle,'large.md'),'\n'+'A retained historical line.\n'.repeat(8000));
     const original=readFileSync(join(f.bundle,'large.md'),'utf8');
     f.sequence=[tool('read',{path:'../source.jsonl'}),input=>{
       const packet=JSON.parse(input.messages.find(m=>m.role==='user').content);
