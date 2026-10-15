@@ -2,10 +2,11 @@
 
 [pi](https://pi.dev) extension and skills for [OKF Agent Memory](https://github.com/okf-memory/okf-agent-memory): local, Git-native project memory that retains **why** decisions were made without turning session history into a knowledge dump.
 
-Release **0.6.0** bundles **OKF v0.4.3**. The corpus format remains **OKF v0.2**.
-This release adds configurable limited/full memory ownership with autonomous recovery,
+Release **0.6.1** bundles **OKF v0.4.3**. The corpus format remains **OKF v0.2**.
+0.6.0 added configurable limited/full memory ownership with autonomous recovery,
 and splits review sections that hit model output limits or call deadlines instead of
-retrying them unchanged; no new corpus migration is required.
+retrying them unchanged; no new corpus migration is required. 0.6.1 is a test-only
+fix so the suite passes on Linux (no runtime change).
 
 ## Install
 
@@ -20,8 +21,8 @@ pi -e .
 Install this release using its pinned tag:
 
 ```bash
-pi install git:github.com/slim-bean/pi-okf-agent-memory@v0.6.0
-pi install -l git:github.com/slim-bean/pi-okf-agent-memory@v0.6.0  # project-local
+pi install git:github.com/slim-bean/pi-okf-agent-memory@v0.6.1
+pi install -l git:github.com/slim-bean/pi-okf-agent-memory@v0.6.1  # project-local
 ```
 
 Pinned refs do not move automatically. Select the new tag explicitly, then restart pi or `/reload`. The extension checks project upgrade progress when it loads; it does not poll for available package releases.
@@ -99,7 +100,7 @@ pending. Index discoverability remains separate from semantic relationships.
 
 A bundle with pending work shows a startup notice and persistent status:
 
-> pi-okf-agent-memory 0.6.0: 1 bundle upgrade step pending. Run /memory-upgrade to review it in order.
+> pi-okf-agent-memory 0.6.1: 1 bundle upgrade step pending. Run /memory-upgrade to review it in order.
 
 **Startup inspection is read-only:** setup writes require user confirmation or a bound host setup request. No migration, ledger creation, or agent turn follows setup alone. Upgrade checks run on reload too; a short model-facing warning persists while work is pending. Missing Git setup is reported before upgrade review, not discovered only at its final commit.
 
