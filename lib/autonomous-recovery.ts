@@ -5,7 +5,7 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSy
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { gitEnv } from "./git.js";
 import { MemoryMaintenanceIssue } from "./maintenance-issue.js";
-import { maintenanceModel } from "./maintenance-model.js";
+import { MODEL_CAPACITY_CODES, maintenanceModel } from "./maintenance-model.js";
 
 interface Case { schema: 1; attempts: number; cause: string; messages: any[]; checkpoints: string[]; status: string }
 const hash = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
@@ -217,7 +217,8 @@ export async function autonomousRecovery(options: {
       throw new MemoryMaintenanceIssue("blocked", "memory-external", bundle, "The selected model/provider does not support recovery tools; provision a compatible review model.",
         { ownership: "full", external: { code: "incompatible-runtime", reason: providerError }, recovery: { casePath } });
     }
-    if ((error as MemoryMaintenanceIssue)?.maintenanceIssue === 1) throw error;
+    // Output-limit/timeouts are provider-capacity failures of this turn: keep the case pending like other transient failures.
+    if ((error as MemoryMaintenanceIssue)?.maintenanceIssue === 1 && !MODEL_CAPACITY_CODES.includes((error as MemoryMaintenanceIssue).code)) throw error;
     state.status = "pending"; atomic(casePath, state);
     throw new MemoryMaintenanceIssue("error", "memory-recovery-transient", bundle,
       `Autonomous recovery encountered an execution/provider failure and will retry automatically: ${error instanceof Error ? error.message : String(error)}`,

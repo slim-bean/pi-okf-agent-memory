@@ -4,14 +4,16 @@ export function modelDeadline(signals: AbortSignal[], timeoutMs = 600_000) {
   const started = Date.now();
   const deadline = AbortSignal.timeout(timeoutMs);
   const signal = AbortSignal.any([...signals, deadline]);
+  /** True only when this call's own deadline (not a caller/foreground cancellation) fired first. */
+  const timedOut = () => signal.aborted && deadline.aborted && signal.reason === deadline.reason;
   const diagnostics = (stopReason?: string, errorMessage?: string) => {
     const reason = signal.reason;
     const abortReason = signal.aborted
-      ? deadline.aborted && reason === deadline.reason
+      ? timedOut()
         ? `Model call timed out after ${timeoutMs / 1000}s`
         : reason instanceof Error ? reason.message : String(reason ?? "Cancellation requested; cause unavailable")
       : stopReason === "aborted" ? errorMessage || "Provider returned aborted without a local cancellation; cause not supplied" : undefined;
     return { timeoutMs, elapsedMs: Date.now() - started, abortReason };
   };
-  return { signal, diagnostics };
+  return { signal, diagnostics, timedOut };
 }

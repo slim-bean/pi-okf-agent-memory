@@ -297,3 +297,54 @@ test('cancellation delivered by a validation observer prevents repair commit',as
     const result=await f.run('review');assert.equal(result.complete,false);assert.equal(f.calls,calls); // validated repair commit only
   }finally{f.close()}
 });
+
+test('output-limit and timeout failures split only the failing section, then finish without duplicate extraction',async()=>{
+  const f=fixture();
+  try {
+    await f.run('upgrade');
+    const entries=[1,2,3].map(index=>({index,id:'e'+index,parentId:index>1?'e'+(index-1):null,timestampMs:index,role:'user',text:`Rationale ${index}: `+'isolated profiles protect state. '.repeat(90)}));
+    const source={path:join(f.cwd,'long.jsonl'),cwd:f.cwd,hash:hash(entries),entries};
+    const seen=[];const prompts=[];
+    const respond=(stopReason,text='')=>({role:'assistant',api:'openai-responses',provider:'fake',model:'offline',timestamp:Date.now(),stopReason,
+      content:[{type:'thinking',thinking:'t'.repeat(40)},{type:'text',text}],usage:{output:8192,cost:{total:.01}}});
+    f.h.ctx.modelRegistry.streamSimple=(_m,input)=>{
+      const sent=JSON.parse(input.messages[0].content).source.entries;seen.push(sent.map(e=>e.index));prompts.push(input.systemPrompt);
+      // Whole section exhausts the budget; halves fit. A lone entry is fine.
+      const result=sent.length===3?respond('length'):respond('stop',JSON.stringify({reviewed:true,changes:[]}));
+      return {result:async()=>result};
+    };
+    const events=[];
+    const first=await f.run('review',{source,onEvent:(type,detail)=>events.push({type,detail})});
+    assert.equal(first.complete,false);assert.equal(first.detail.split.reason,'model-output-limit');
+    assert.ok(events.some(e=>e.type==='split'&&e.detail.parts.length===2));
+    assert.match(prompts[0],/OUTPUT BUDGET: .*8192 output tokens/);
+    let result;for(let i=0;i<4&&!(result?.complete);i++) result=await f.run('review',{source});
+    assert.equal(result.complete,true);
+    assert.deepEqual(seen,[[1,2,3],[1,2],[3]]);
+    const calls=f.calls+seen.length;await f.run('review',{source});assert.equal(f.calls+seen.length,calls); // cached halves are not re-extracted
+    // A single small section cannot be split further: a structured, bounded failure.
+    f.h.ctx.modelRegistry.streamSimple=()=>({result:async()=>respond('length')});
+    await assert.rejects(f.run('review'),e=>e.code==='model-output-limit'&&e.detail.minimumSplit===true&&/smallest split size/.test(e.message));
+    assert.equal(git(f.bundle,'status','--porcelain'),'');
+  }finally{f.close()}
+});
+
+test('a section that exceeds its call deadline is split rather than retried unchanged',async()=>{
+  const f=fixture();const keepAlive=setTimeout(()=>{},2000);
+  try {
+    await f.run('upgrade');
+    const entries=[{index:1,id:'a',parentId:null,timestampMs:1,role:'user',text:'Long rationale. '.repeat(400)}];
+    const source={path:join(f.cwd,'slow.jsonl'),cwd:f.cwd,hash:hash(entries),entries};
+    const sizes=[];
+    f.h.ctx.modelRegistry.streamSimple=(_m,input,options)=>{
+      const part=JSON.parse(input.messages[0].content).source.entries[0];sizes.push([part.startChar,part.endChar]);
+      if(sizes.length>1)return {result:async()=>({role:'assistant',stopReason:'stop',content:[{type:'text',text:'{"reviewed":true,"changes":[]}'}],usage:{cost:{total:0}}})};
+      return {result:()=>new Promise(resolve=>options.signal.addEventListener('abort',()=>resolve({role:'assistant',stopReason:'aborted',content:[],usage:{cost:{total:0}}}),{once:true}))};
+    };
+    const first=await f.run('review',{source,modelTimeoutMs:20});
+    assert.equal(first.detail.split.reason,'model-timeout');
+    let result;for(let i=0;i<3&&!(result?.complete);i++) result=await f.run('review',{source,modelTimeoutMs:20});
+    assert.equal(result.complete,true);
+    assert.deepEqual(sizes,[[0,6400],[0,3200],[3200,6400]]); // exact continuation offsets, no dropped text
+  }finally{clearTimeout(keepAlive);f.close()}
+});

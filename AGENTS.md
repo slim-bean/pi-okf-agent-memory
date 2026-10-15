@@ -20,7 +20,10 @@ pi-okf-agent-memory integrates a local OKF v0.2 corpus with pi. Read `README.md`
   never include auth/transport options, start another foreground agent/pi process, or release ownership before an aborted stream settles.
   model-deadline.ts preserves the first cancellation cause and elapsed/deadline metadata;
   modelTimeoutMs overrides the default 600s deadline. Native response messages stay
-  unchanged; additive end-event diagnostics distinguish timeout from provider abortion. Never launch an
+  unchanged; additive end-event diagnostics distinguish timeout from provider abortion.
+  Own-deadline timeouts and `length` stops are structured `model-timeout`/`model-output-limit`
+  issues; review halves only the failing section via a persisted split marker (never re-splits
+  committed sections or splits on caller cancellation) down to a 2,000-char floor. Never launch an
   authenticated pi in tests; fake registries plus real temporary CLI/Git fixtures only.
 - `lib/maintenance-repair.ts`: automatic structural repair under the adapter's bundle lock.
   Restore indexes from CLI metadata; model proposals only retarget broken body links to

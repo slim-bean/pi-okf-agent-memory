@@ -131,6 +131,15 @@ whole-repository reconciliation is not granted for unrelated enclosing project s
   override the per-call deadline with `modelTimeoutMs`; pi-session-maintenance
   supplies its configurable `modelTimeoutSeconds`. Longer deadlines do not disable
   foreground/peer cancellation or override shorter provider/server limits.
+- Prompts state the output-token budget. A section whose call stops on `length` or
+  its own deadline is not retried unchanged: a `<section>.split.json` marker in the
+  private work dir halves only that section (whole entries by size, or one oversized
+  entry at its midpoint with exact `startChar`/`endChar`), and the opportunity returns
+  `complete:false` with `detail.split`. Other section hashes and committed journals
+  stay stable, so nothing is re-extracted or duplicated. Sections at or below 2,000
+  JSON chars are not split; they fail with structured `model-output-limit` /
+  `model-timeout` issues (`detail.minimumSplit`) for the coordinator's retry limit.
+  Caller/foreground cancellation never triggers a split.
 - Before upgrade/review and after applying a plan, failed validation triggers automatic
   structural repair under the same bundle lock. Index entries/descriptions are restored
   from CLI concept metadata without a model call. Remaining broken links can use one
