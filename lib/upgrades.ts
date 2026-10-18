@@ -4,6 +4,7 @@ import { hostname } from "node:os";
 import { join } from "node:path";
 import { requireCurrentContract, validateBundle } from "./okf.js";
 import { bundleCommitStatus, commitBundle } from "./git.js";
+import { bundleCommitStatusAsync } from "./git-status-async.js";
 
 export interface UpgradeStep {
 	id: string;
@@ -118,13 +119,22 @@ export class UpgradeRunner {
 		return state;
 	}
 
-	status() {
+	status() { return this.describeStatus(this.readState()); }
+
+	async statusAsync() {
 		const state = this.readState();
+		const finalization = state.completed.length > 0 && state.completed.length === this.steps.length
+			? await bundleCommitStatusAsync(this.bundle) : { pending: false, commit: null };
+		if (JSON.stringify(state) !== JSON.stringify(this.readState())) throw new Error("Upgrade state changed during status inspection; retry.");
+		return this.describeStatus(state, finalization);
+	}
+
+	private describeStatus(state: State, inspected?: ReturnType<typeof bundleCommitStatus>) {
 		const pending = this.steps.slice(state.completed.length).map(({ id, title }) => ({ id, title }));
 		const appliedPackageVersion = state.application?.packageVersion ?? state.completed.at(-1)?.packageVersion ?? null;
 		const versionPending = appliedPackageVersion !== this.packageVersion;
 		const finalization = state.completed.length > 0 && pending.length === 0
-			? bundleCommitStatus(this.bundle)
+			? inspected ?? bundleCommitStatus(this.bundle)
 			: { pending: false, commit: null };
 		// A local intent marker survives crashes and post-commit hook edits. It
 		// is deliberately excluded from Git; the committed ledger is portable.

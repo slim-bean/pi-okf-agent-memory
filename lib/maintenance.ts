@@ -1,4 +1,5 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { requireCurrentContractAsync } from "./contract-async.js";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync, unlinkSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -186,7 +187,9 @@ export function registerMemoryMaintenance(pi: ExtensionAPI, options: { packageVe
         if (scope === "" || (!isAbsolute(scope) && scope !== ".." && !scope.startsWith(`..${sep}`))) throw new MemoryMaintenanceIssue("blocked", "memory-external", bundle,
           "Private maintenance storage cannot live inside the knowledge bundle (recursive checkpoints and publishing private transcripts). Provision stateDir/workDir outside it.", { ownership, external: { code: "unavailable-resource" } });
       }
-      const binary = options.getBinary(r.cwd); requireCurrentContract(binary);
+      const binary = options.getBinary(r.cwd);
+      if (r.operation === "status") await requireCurrentContractAsync(binary);
+      else requireCurrentContract(binary);
       const model = r.model ? r.context.modelRegistry.find(r.model.slice(0, r.model.indexOf("/")), r.model.slice(r.model.indexOf("/") + 1)) : r.context.model;
       if (!model) throw new Error("Select a review model or configure reviewModel");
       const modelKey = `${model.provider}/${model.id}`;
@@ -205,7 +208,7 @@ export function registerMemoryMaintenance(pi: ExtensionAPI, options: { packageVe
       }, r.onEvent);
       const runner = new UpgradeRunner(bundle, options.skillsDir, options.packageVersion);
       let status;
-      try { status = runner.status(); }
+      try { status = r.operation === "status" ? await runner.statusAsync() : runner.status(); }
       catch (error) {
         if (!full) throw error;
         if (r.operation === "status") return { available: true, bundle, key: key(modelKey), upgraded: false, recoveryRequired: String(error),

@@ -1,6 +1,6 @@
 # AGENTS.md
 
-pi-okf-agent-memory integrates a local OKF v0.2 corpus with pi. Read `README.md` for usage, upgrade behavior, and development commands. The current release is 0.6.1, bundling OKF v0.4.3.
+pi-okf-agent-memory integrates a local OKF v0.2 corpus with pi. Read `README.md` for usage, upgrade behavior, and development commands. The current release is 0.7.0, bundling OKF v0.4.3.
 
 ## Layout
 
@@ -12,6 +12,10 @@ pi-okf-agent-memory integrates a local OKF v0.2 corpus with pi. Read `README.md`
 - `lib/setup.ts` / `lib/setup-extension.ts`: Git-backed setup, startup confirmation and explicit `okf:setup:*` host protocol. See `docs/setup.md` for unattended provisioning; setup never grants upgrade consent.
 - `lib/upgrades.ts`: append-only upgrade registry, bundle-scoped ledger, review lock and required finalization.
 - `lib/git.ts`: commit proof and scoped Git operations; preserve staging outside the bundle.
+  `git-status-async.ts` provides non-blocking maintenance inspection with the same
+  transient/committed-ledger rules plus a final HEAD recheck. `contract-async.ts`
+  shares unchanged binary checks; failures/replacements invalidate the cache.
+  Never use cached status to authorize mutation or bypass final verification.
 - `lib/maintenance.ts` / `lib/maintenance-git.ts`: optional snapshot review/upgrade adapter;
   see `docs/maintenance.md`. Tool-free model proposals, scoped CLI writes, validation,
   automatic commits, separately requested non-force upstream pushes. `maintenance-issue.ts`
