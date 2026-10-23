@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, writeFileSync, appendFileSync, rmSync, readdirSync, existsSync, realpathSync, chmodSync, statSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync, appendFileSync, rmSync, readdirSync, existsSync, realpathSync, chmodSync, statSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -52,6 +52,92 @@ function evidenceRepair(f) {
     {oldText:'Earlier claim needs evidence review.',newText:'Historical proposal, not an established fact. Repository evidence does not establish implementation; retain only this qualified rationale.'},
   ]}),stop('Reviewed repository evidence, corrected malformed governance and qualified the historical claim. No human verification is asserted.')];
 }
+
+test('open OKF types are extracted and committed without escalating into recovery',async()=>{
+  const f=fixture();
+  try {
+    await f.run('upgrade');
+    for (const type of ['Discovery','Research','Review']) {
+      const entries=[{index:1,id:type,parentId:null,timestampMs:1,role:'user',text:'Durable rationale for '+type}];
+      const source={path:join(f.cwd,type+'.jsonl'),cwd:f.cwd,hash:hash(entries),entries};
+      f.sequence=[stop(JSON.stringify({reviewed:true,changes:[{concept:'research/'+type.toLowerCase(),title:type,description:'Durable reasoning.',body:'Preserved rationale, not human verification.',type,entries:[1]}]}))];
+      assert.equal((await f.run('review',{source})).complete,true);
+      assert.match(readFileSync(join(f.bundle,'research',type.toLowerCase()+'.md'),'utf8'),new RegExp('type: '+type));
+    }
+    assert.equal(f.events.some(e=>e.type==='recovery'),false);
+    assert.equal(git(f.bundle,'status','--porcelain'),'');
+  }finally{await f.close()}
+});
+
+test('upgrade retires legacy source-unbound triggers without losing cases or granting review receipts',async()=>{
+  const f=fixture();
+  try {
+    await f.run('upgrade');
+    const key=hash([realpathSync(f.bundle),'review']);
+    const pendingDir=join(f.cwd,'work/recovery-pending');mkdirSync(pendingDir,{recursive:true});
+    const marker=join(pendingDir,key+'.json');
+    writeFileSync(marker,JSON.stringify({cause:'Unsupported concept type',ownership:'full'}));
+    const caseDir=join(f.cwd,'work/recovery',key);mkdirSync(caseDir,{recursive:true});
+    const oldCase=JSON.stringify({schema:1,attempts:82,status:'pending',cause:'Unsupported concept type',messages:[],checkpoints:[]});
+    writeFileSync(join(caseDir,'case.json'),oldCase);
+    const before=f.calls;
+    assert.equal((await f.run('status')).available,true);
+    assert.equal(existsSync(marker),true,'passive status never migrates state');
+    // A fresh extraction is still required; migration itself is not completion.
+    f.sequence=[stop(JSON.stringify({reviewed:true,changes:[{concept:'research/recovered',title:'Recovered',description:'Durable rationale.',body:'Fresh source evidence after contract correction.',type:'Discovery',entries:[1]}]}))];
+    assert.equal((await f.run('review')).complete,true);
+    assert.equal(f.calls,before+1);assert.equal(existsSync(marker),false);
+    assert.ok(readdirSync(pendingDir).some(n=>n.startsWith(key+'.json.retired-')));
+    assert.equal(readFileSync(join(caseDir,'case.json'),'utf8'),oldCase);
+    assert.ok(f.events.some(e=>e.type==='recovery-retired'));
+    assert.equal(f.events.some(e=>e.type==='recovery'),false);
+    assert.equal(git(f.bundle,'status','--porcelain'),'');
+  }finally{await f.close()}
+});
+
+test('source-bound recovery cannot inherit a different queued session context or trigger',async()=>{
+  const f=fixture();
+  try {
+    await f.run('upgrade');
+    f.sequence=[stop('invalid extraction JSON')];
+    await assert.rejects(f.run('review'),e=>e.code==='memory-recovery-pending');
+    const entries=[{index:1,id:'other',parentId:null,timestampMs:2,role:'user',text:'Different source rationale.'}];
+    const source={path:join(f.cwd,'other.jsonl'),cwd:f.cwd,hash:hash(entries),entries};
+    assert.equal((await f.run('review',{source})).complete,true,'another source performs normal extraction');
+    f.sequence=[tool('read',{path:'../source.jsonl'}),input=>{
+      const packet=JSON.parse(input.messages.find(m=>m.role==='user').content);
+      assert.notEqual(packet.source.hash,source.hash);
+      return stop(JSON.stringify({reviewed:true,reviewedSourceHash:packet.source.hash}));
+    }];
+    assert.equal((await f.run('review')).complete,true);
+    const cases=f.events.filter(e=>e.type==='recovery');assert.equal(cases.length,1);
+  }finally{await f.close()}
+});
+
+test('unchanged checkpoints do not count as progress; three no-op opportunities become retry-limited errors',async()=>{
+  const f=fixture();
+  try {
+    await f.run('upgrade');seedInvalid(f);
+    for(let i=1;i<=3;i++) {
+      f.sequence=Array.from({length:8},()=>tool('bash',{command:'printf "read-only investigation"'}));
+      await assert.rejects(f.run('review'),e=>i<3 ? e.kind==='deferred'&&e.code==='memory-recovery-pending' : e.kind==='error'&&e.code==='memory-recovery-stalled'&&e.detail.recovery.noProgress===3);
+      if(i===1) {
+        const casePath=f.events.find(e=>e.type==='recovery').detail.casePath;
+        const state=JSON.parse(readFileSync(casePath,'utf8'));
+        state.messages=[{role:'user',content:'old context'.repeat(20000)}];
+        writeFileSync(casePath,JSON.stringify(state)); // next opportunity archives oversized context, not the no-progress streak
+      }
+    }
+    const progress=f.events.filter(e=>e.type==='recovery-progress');
+    assert.deepEqual(progress.map(e=>e.detail.noProgress),[1,2,3]);
+    assert.ok(progress.every(e=>e.detail.changed===false));
+    assert.equal(new Set(f.events.filter(e=>e.type==='recovery-checkpoint').map(e=>e.detail.path)).size,1);
+    assert.equal(f.events.some(e=>e.type==='recovery-result'),false);
+    f.sequence=evidenceRepair(f);
+    assert.equal((await f.run('review')).detail.recovered,true,'real repairs can still resume the retained case');
+    assert.equal(git(f.bundle,'status','--porcelain'),'');
+  }finally{await f.close()}
+});
 
 test('ownership defaults to limited without host autodetection; generic explicit policy wins',()=>{
   const env={...process.env};const cwd=mkdtempSync(join(tmpdir(),'ownership-'));
@@ -126,6 +212,8 @@ test('recovery budget yields durable progress and resumes automatically without 
   try {
     await f.run('upgrade');seedInvalid(f);f.sequence=evidenceRepair(f);
     await assert.rejects(f.run('review',{maxCost:.015}),e=>e.kind==='deferred'&&e.code==='memory-recovery-pending');
+    const progress=f.events.find(e=>e.type==='recovery-progress');
+    assert.equal(progress.detail.changed,true);assert.equal(progress.detail.noProgress,0,'actual partial repairs count as progress');
     const tools=f.events.filter(e=>e.type==='recovery-tool').length;const calls=f.calls;
     const result=await f.run('review');assert.equal(result.detail.recovered,true);assert.equal(f.calls,calls+1);
     assert.equal(f.events.filter(e=>e.type==='recovery-tool').length,tools);assert.equal(git(f.bundle,'status','--porcelain'),'');

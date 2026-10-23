@@ -7,7 +7,10 @@ import { gitEnv } from "./git.js";
 import { MemoryMaintenanceIssue } from "./maintenance-issue.js";
 import { MODEL_CAPACITY_CODES, maintenanceModel } from "./maintenance-model.js";
 
-interface Case { schema: 1; attempts: number; cause: string; messages: any[]; checkpoints: string[]; status: string }
+interface Case {
+  schema: 1; attempts: number; cause: string; messages: any[]; checkpoints: string[]; status: string;
+  noProgress?: number; progressHash?: string; progressModel?: string;
+}
 const hash = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 function atomic(file: string, value: unknown) {
   mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
@@ -50,7 +53,11 @@ export async function autonomousRecovery(options: {
   verify(completion?: any): unknown | Promise<unknown>;
 }): Promise<{ casePath: string; evidence: unknown }> {
   const { bundle, signal } = options;
-  const dir = join(options.workDir, "recovery", hash([bundle, options.operation]));
+  // A review attests one exact source, never whichever queued session happens
+  // to get the next executor slot. Legacy cases remain intact as evidence.
+  const source = options.source as { path?: string; hash?: string } | undefined;
+  const identity = options.operation === "review" ? [source?.path, source?.hash] : [];
+  const dir = join(options.workDir, "recovery", hash(["recovery-v2", bundle, options.operation, ...identity]));
   const casePath = join(dir, "case.json");
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   const cause = options.cause instanceof Error ? options.cause.message : String(options.cause);
@@ -59,7 +66,8 @@ export async function autonomousRecovery(options: {
   try {
     state = existsSync(casePath) ? JSON.parse(readFileSync(casePath, "utf8")) : empty();
     if (state?.schema !== 1) throw new MemoryMaintenanceIssue("blocked", "memory-external", bundle, "Recovery case requires a compatible runtime; its evidence was preserved.", { ownership: "full", external: { code: "incompatible-runtime" } });
-    if (!Array.isArray(state.messages) || !Array.isArray(state.checkpoints) || !Number.isSafeInteger(state.attempts) || state.attempts < 0) throw new Error("Malformed recovery case");
+    if (!Array.isArray(state.messages) || !Array.isArray(state.checkpoints) || !Number.isSafeInteger(state.attempts) || state.attempts < 0 ||
+        (state.noProgress !== undefined && (!Number.isSafeInteger(state.noProgress) || state.noProgress < 0))) throw new Error("Malformed recovery case");
   } catch (error) {
     if (error instanceof MemoryMaintenanceIssue) throw error;
     if (existsSync(casePath)) renameSync(casePath, `${casePath}.corrupt-${randomUUID()}`);
@@ -93,7 +101,7 @@ export async function autonomousRecovery(options: {
     `Your standing authority includes setup, corpus/schema/frontmatter/provenance repairs, stale factual review, governance/lifecycle corrections (including held concepts), archival of unsupported/obsolete claims, index/link repair and recoverable Git operations scoped to this bundle. Read source evidence, repository files and Git history to establish facts. When a fact cannot be established, preserve the original in a checkpoint/archive, qualify uncertainty or retire/quarantine the unsupported concept; missing facts are NOT a reason to wait for a human. When correcting previously verified meaning, retain the old verification as historical provenance, not a human endorsement of the updated content. Never invent human verification, sources, facts or author credentials; advance review dates only after real investigation. Preserve durable WHY rather than transcripts.\n` +
     `All mutations get a host checkpoint. Prefer read/edit/write and the resolved OKF CLI. Shell exists for investigation and bundle/Git repair, not unrelated project modifications. Never modify package instructions, upgrade completion ledger/state/locks, host settings, credentials, or files outside the bundle. Do not read auth.json, print credential/environment values or send secrets to models/logs; diagnose credential availability through status/errors rather than secret contents. Do not weaken validation/orphan policy to pass. Do not bypass signing/hooks, force push, discard unrelated staging, reset history, delete Git metadata, kill another owner, or touch a live/foreign lock. If the enclosing Git repository contains unrelated project files, do not perform whole-repository merge/rebase operations. Automatic local commits are host-verified; push is allowed ONLY when operation is push and then only to the existing configured upstream.\n` +
     `If ordinary extraction cannot run, you may complete the review directly using tools: inspect ALL branches of the current source by path, search existing memory, record only warranted durable WHY with source attribution, then return JSON {"reviewed":true,"reviewedSourceHash":"the exact supplied source hash"}. Do not attest until the whole current source has been reviewed. For upgrade failures, read the supplied package guide paths and review the contract; explicit full ownership supersedes human-approval clauses. You may return {"reviewedUpgrade":{"id":"supplied step ID","guideHash":"supplied guide hash"}} only after reviewing that step; the host still enforces ordering, deterministic verification and required finalization.\n` +
-    `After tools, explain the evidence and repairs briefly. Success is decided by host validation/commit, not your assertion. A call/opportunity limit means save progress and continue automatically next opportunity, not ask a human. Only if genuinely outside your control return JSON {"external":{"code":"credentials|permission|unavailable-resource|incompatible-runtime","reason":"specific evidence and missing host resource"}}. Ambiguous memory content is within your control: qualify or archive it. Case/checkpoints preserve prior work and are available through read.\n` +
+    `After tools, explain the evidence and repairs briefly. Success is decided by host validation/commit, not your assertion. A call/opportunity limit means save progress and continue automatically next opportunity, not ask a human. Only if genuinely outside your control return JSON {"external":{"code":"credentials|permission|unavailable-resource|incompatible-runtime","reason":"specific evidence and missing host resource"}}. Ambiguous memory content is within your control: qualify or archive it. Case/checkpoints preserve prior work and are available through read. Do not repeatedly dump case.json or entire archived transcripts: they contain this tool loop itself and can exhaust context recursively. Prioritize the current source, concrete repairs and a no-tool completion for host verification. Use temporary scratch directories, never diagnostic test concepts in the real bundle.\n` +
     `Tool working directory is the bundle. Repository workspace for read-only investigation: ${JSON.stringify(options.cwd)}. Executable: ${JSON.stringify(options.binary)}.`;
   const tools: any[] = [createReadTool(bundle), createEditTool(bundle), createWriteTool(bundle), createBashTool(bundle, {
     exposeSessionEnvironment: false,
@@ -104,8 +112,19 @@ export async function autonomousRecovery(options: {
     .map(m => m.details.fullOutputPath).filter((p: string) => existsSync(p)).map((p: string) => canonical(p)));
   const readVersions = new Map<string, string>();
   let cost = 0;
+  const initialHash = hash(recoverySnapshot(bundle));
+  const progressModel = `${options.model.provider}/${options.model.id}`;
   const pending = (message: string): never => {
-    state.status = "pending"; atomic(casePath, state);
+    const currentHash = hash(recoverySnapshot(bundle));
+    const sameBaseline = state.progressHash === initialHash && state.progressModel === progressModel;
+    state.noProgress = currentHash === initialHash ? (sameBaseline ? state.noProgress ?? 0 : 0) + 1 : 0;
+    state.progressHash = currentHash; state.progressModel = progressModel;
+    state.status = state.noProgress >= 3 ? "stalled" : "pending";
+    atomic(casePath, state);
+    options.onEvent?.("recovery-progress", { casePath, changed: currentHash !== initialHash, noProgress: state.noProgress, status: state.status });
+    if (state.status === "stalled") throw new MemoryMaintenanceIssue("error", "memory-recovery-stalled", bundle,
+      "Recovery made no corpus changes or verified completion for three opportunities. Automatic retries now use error backoff and the coordinator retry limit; inspect the case or select a more capable model.",
+      { ownership: "full", recovery: { casePath, attempts: state.attempts, status: state.status, noProgress: state.noProgress } });
     throw new MemoryMaintenanceIssue("deferred", "memory-recovery-pending", bundle, message,
       { ownership: "full", recovery: { casePath, attempts: state.attempts, status: "pending" } });
   };
@@ -193,7 +212,7 @@ export async function autonomousRecovery(options: {
         options.onModelEvent?.({ type: "tool-result", message });
       }
     }
-    return pending("Autonomous recovery saved progress after eight model turns; it will continue at the next safe idle opportunity.");
+    return pending("Recovery yielded after eight model turns; context retained, but no completion verified. It will retry at the next safe idle opportunity.");
   } catch (error) {
     if (signal.aborted) { state.status = "interrupted"; atomic(casePath, state); signal.throwIfAborted(); }
     if ((error as MemoryMaintenanceIssue)?.code === "model-auth") {

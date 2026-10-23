@@ -80,7 +80,16 @@ never claim that agent-corrected content was human-reviewed.
 `autonomous-recovery.ts` uses the existing registry plus SDK read/edit/write/bash
 in-process, without extension/agent discovery or another pi process. Private cases
 under `workDir/recovery/` record native context, cause, attempts, checkpoints and
-outcomes. Original corpus bytes are checkpointed before writes; read versions and
+outcomes. Review case/trigger identities include source path and content hash, so
+queued sessions never share review context. On an authorized operation, legacy
+source-unbound trigger files are renamed to `.retired-<uuid>` evidence and fresh
+validation/extraction replaces their stale diagnosis. Status/startup do not migrate
+anything. Legacy cases/checkpoints, extraction journals and corpus files are retained;
+retirement alone never grants completion or bypasses validation/commit.
+
+OKF semantic types are open, nonempty single-line labels (at most 80 characters),
+including Discovery and Research; CLI example types are not an enum.
+Original corpus bytes are checkpointed before writes; read versions and
 source/lock guards protect normal file-tool writes. Interrupted calls are inspected,
 not blindly replayed. Corpus snapshots are content-addressed; individual full
 snapshots are capped at 8 MiB. Owner-only permission metadata can be repaired before
@@ -90,7 +99,15 @@ foreign UID rights or Git-object mode changes. Private work inside a bundle is r
 Each opportunity permits at most eight sequential recovery calls, bounded by
 reported-cost allowance and per-call deadline; shell commands have a 60s bound.
 Opportunity exhaustion defers durable progress for automatic continuation; transient
-provider failures back off without asking a human. Unsupported provider capabilities,
+provider failures back off without asking a human. Content fingerprints at opportunity
+boundaries distinguish real corpus changes from repeated checkpoint events. After
+three unchanged opportunities with no verified completion, `memory-recovery-stalled`
+is an **error**, not a deferral, so the coordinator's ordinary backoff and `maxRetries`
+apply. Evidence is retained and real repairs can still resume. An independently changed
+corpus or selected model resets the no-progress streak. No-op scratch experiments,
+context resets and reading prior transcripts do not reset it. These fingerprints detect
+content changes, not semantic improvement; validation/commit still decide success.
+Unsupported provider capabilities,
 missing credentials/compatible runtimes/mounts or ownership outside memory scope are
 structured `memory-external` host prerequisites. A model's external claim alone is
 insufficient: failed operational evidence is required. Facts/policy ambiguity is

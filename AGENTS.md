@@ -1,6 +1,6 @@
 # AGENTS.md
 
-pi-okf-agent-memory integrates a local OKF v0.2 corpus with pi. Read `README.md` for usage, upgrade behavior, and development commands. The current release is 0.7.0, bundling OKF v0.4.3.
+pi-okf-agent-memory integrates a local OKF v0.2 corpus with pi. Read `README.md` for usage, upgrade behavior, and development commands. The current release is 0.8.0, bundling OKF v0.4.3.
 
 ## Layout
 
@@ -40,6 +40,12 @@ pi-okf-agent-memory integrates a local OKF v0.2 corpus with pi. Read `README.md`
   no second pi process/session or auth loading. Full ownership investigates/qualifies/
   archives ambiguous memory rather than waiting for human approval. Eight turns and
   approximate budgets bound each opportunity; persist progress and continue automatically.
+  Review cases/triggers bind source path + hash; never mix queued sources. Authorized
+  operations archive legacy unbound triggers, then revalidate/extract normally; migration
+  grants no receipts and preserves old cases/corpus. OKF concept types are open bounded
+  single-line labels, not a whitelist of CLI examples. Three unchanged opportunities
+  become retry-limited `memory-recovery-stalled` errors, not endless deferrals; repeated
+  checkpoint events and context resets alone are not progress.
   File tools constrain roots/protect receipts and check read versions; shell is cooperative
   scope with process/network/credential authority, not a sandbox or foreground tool override.
   Preserve native responses/args; journal before writes, await cancelled streams/tools before

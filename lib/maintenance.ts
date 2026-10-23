@@ -72,7 +72,9 @@ function parse(text: string, entries: Entry[], known: Record<string, string>, fu
       if (typeof c[key] !== "string" || !c[key].trim() || c[key].length > max) throw new Error(`Invalid ${key} in maintenance plan`);
     }
     if (!Array.isArray(c.entries) || !c.entries.length || c.entries.some((n: unknown) => !refs.has(n as number))) throw new Error("Maintenance change must cite entries from its source section");
-    if (c.type !== undefined && !["Fact", "Decision", "Architecture", "Requirement", "Bug"].includes(c.type)) throw new Error("Unsupported concept type");
+    // OKF concept types are open labels, not the examples in CLI help. Keep
+    // metadata bounded/single-line without rejecting valid Discovery/Research.
+    if (c.type !== undefined && (typeof c.type !== "string" || !c.type.trim() || c.type.length > 80 || /[\r\n\0]/.test(c.type))) throw new Error("Invalid concept type: expected a nonempty single-line label of at most 80 characters");
     // Governance is never granted by generated maintenance. Holds and human-verified
     // concepts need an explicit policy decision, not an unattended overwrite.
     const previous = known[c.concept + ".md"];
@@ -251,7 +253,9 @@ export function registerMemoryMaintenance(pi: ExtensionAPI, options: { packageVe
           r.assertSource();
         } else r.assertSource?.();
       };
-      const pendingRepair = join(r.workDir, "recovery-pending", digest([bundle, r.operation]) + ".json");
+      const sourceIdentity = r.operation === "review" ? [r.source!.path, r.source!.hash] : [];
+      const pendingRepair = join(r.workDir, "recovery-pending", digest(["recovery-v2", bundle, r.operation, ...sourceIdentity]) + ".json");
+      const legacyPendingRepair = join(r.workDir, "recovery-pending", digest([bundle, r.operation]) + ".json");
       const account = (usage: any) => { cycleCost += usage?.cost?.total ?? 0; r.onUsage?.(usage); };
       const recover = async (error: unknown) => {
         if (cycleCost >= (r.maxCost ?? 0.5)) throw new MemoryMaintenanceIssue("deferred", "memory-recovery-pending", bundle, "Recovery retained for the next opportunity's model budget.", { ownership });
@@ -307,6 +311,15 @@ export function registerMemoryMaintenance(pi: ExtensionAPI, options: { packageVe
           const authorName = process.env.GIT_AUTHOR_NAME || git(bundle, ["config", "--get", "user.name"], [0, 1]).stdout.trim();
           const authorEmail = process.env.GIT_AUTHOR_EMAIL || process.env.EMAIL || git(bundle, ["config", "--get", "user.email"], [0, 1]).stdout.trim();
           if (!authorName || !authorEmail || git(bundle, ["var", "GIT_AUTHOR_IDENT"], [0, 128]).code !== 0) throw new MemoryMaintenanceIssue("blocked", "git-identity", bundle, "No authorized Git author identity is provisioned; OS/hostname-derived defaults are not an author grant.");
+          if (existsSync(legacyPendingRepair)) {
+            // Old triggers weren't source-bound and can send every queued source
+            // back into one stale case (notably the removed concept-type whitelist).
+            // Archive, never erase evidence or issue a receipt. Fresh validation,
+            // extraction and commit below must still establish actual completion.
+            const archived = `${legacyPendingRepair}.retired-${randomUUID()}`;
+            renameSync(legacyPendingRepair, archived);
+            r.onEvent?.("recovery-retired", { path: archived, reason: "Legacy source-unbound trigger; rechecking with current contracts. No review completion inferred." });
+          }
           if (existsSync(pendingRepair)) return await recover(new Error(JSON.parse(readFileSync(pendingRepair, "utf8")).cause));
         }
         if (r.operation === "push") { await pushKnowledge(bundle, signal); r.onEvent?.("push", { bundle }); return { available: true, complete: true, key: key(modelKey) }; }
@@ -489,7 +502,7 @@ export function registerMemoryMaintenance(pi: ExtensionAPI, options: { packageVe
         const issue = error as MemoryMaintenanceIssue;
         if (issue.code === "model-auth") throw new MemoryMaintenanceIssue("blocked", "memory-external", bundle,
           "The configured memory model has no authorized credentials. Provision provider access through the host; no console login answer is awaited.", { ownership, external: { code: "credentials", reason: issue.message } });
-        if (issue.code === "memory-external" || issue.code === "memory-recovery-transient" || (issue.kind === "deferred" && !["memory-repair-pending", "memory-context-capacity"].includes(issue.code))) throw error;
+        if (issue.code === "memory-external" || issue.code === "memory-recovery-stalled" || issue.code === "memory-recovery-transient" || (issue.kind === "deferred" && !["memory-repair-pending", "memory-context-capacity"].includes(issue.code))) throw error;
         if (issue.code === "git-conflict" && canonicalRecoveryPath(git(bundle, ["rev-parse", "--show-toplevel"]).stdout.trim()) !== bundle) throw new MemoryMaintenanceIssue("blocked", "memory-external", bundle,
           "The enclosing project repository has an unresolved Git operation outside delegated memory-only authority. Its owning agent/host must reconcile it; no human approval is awaited.", { ownership, external: { code: "permission", reason: issue.message } });
         if (issue.code === "git-upstream" && !git(bundle, ["remote"]).stdout.trim()) throw new MemoryMaintenanceIssue("blocked", "memory-external", bundle,

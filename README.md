@@ -2,11 +2,15 @@
 
 [pi](https://pi.dev) extension and skills for [OKF Agent Memory](https://github.com/okf-memory/okf-agent-memory): local, Git-native project memory that retains **why** decisions were made without turning session history into a knowledge dump.
 
-Release **0.7.0** bundles **OKF v0.4.3**. The corpus format remains **OKF v0.2**.
-Background maintenance status now uses non-blocking Git subprocesses and shared,
-executable-identity-keyed binary version checks. Fresh mutation/finalization
-verification is unchanged. This includes the 0.6.1 Linux test fix and requires
-no new corpus migration step; normal package adoption checks still apply.
+Release **0.8.0** bundles **OKF v0.4.3**. The corpus format remains **OKF v0.2**.
+Maintenance accepts open OKF concept types (including Discovery/Research), binds
+review recovery to the exact source, and detects repeated no-progress opportunities.
+On the next authorized operation, legacy source-unbound recovery triggers are
+archived and current validation/extraction run afresh. Old cases/checkpoints and
+corpus files are preserved; no review receipt is inferred from migration. This
+unsticks the old `Unsupported concept type` loop without deleting the private ledger
+or bypassing validation/commits. No new corpus migration step; normal package
+adoption checks still apply. Non-blocking status checks from 0.7.0 are retained.
 
 ## Install
 
@@ -21,8 +25,8 @@ pi -e .
 Install this release using its pinned tag:
 
 ```bash
-pi install git:github.com/slim-bean/pi-okf-agent-memory@v0.7.0
-pi install -l git:github.com/slim-bean/pi-okf-agent-memory@v0.7.0  # project-local
+pi install git:github.com/slim-bean/pi-okf-agent-memory@v0.8.0
+pi install -l git:github.com/slim-bean/pi-okf-agent-memory@v0.8.0  # project-local
 ```
 
 Pinned refs do not move automatically. Select the new tag explicitly, then restart pi or `/reload`. The extension checks project upgrade progress when it loads; it does not poll for available package releases.
@@ -100,7 +104,7 @@ pending. Index discoverability remains separate from semantic relationships.
 
 A bundle with pending work shows a startup notice and persistent status:
 
-> pi-okf-agent-memory 0.7.0: 1 bundle upgrade step pending. Run /memory-upgrade to review it in order.
+> pi-okf-agent-memory 0.8.0: 1 bundle upgrade step pending. Run /memory-upgrade to review it in order.
 
 **Startup inspection is read-only:** setup writes require user confirmation or a bound host setup request. No migration, ledger creation, or agent turn follows setup alone. Upgrade checks run on reload too; a short model-facing warning persists while work is pending. Missing Git setup is reported before upgrade review, not discovered only at its final commit.
 
@@ -171,7 +175,12 @@ provenance, governance and stale-fact problems with read/edit/write/shell tools.
 It qualifies or archives unsupported claims instead of asking a human, provisions
 missing bundles/Git, restores owner-only file access, and repairs scoped Git failures.
 Cases/checkpoints survive cancellation; budget/turn limits cause automatic continuation,
-not approval requests. Tool-based source reviews can handle failed extraction or
+not approval requests. Three opportunities without changed corpus content or verified
+completion become `memory-recovery-stalled` errors, subject to the coordinator's
+backoff/retry limit rather than endless deferrals. Checkpoint events alone are not
+progress. Source-bound cases retain evidence across retries; changing source revisions
+cannot inherit another review's context. Existing diagnostic artifacts are preserved,
+not automatically classified as expendable or deleted during upgrade. Tool-based source reviews can handle failed extraction or
 oversized corpora, with source-hash binding and actual validation/commit checks.
 Corpus-content fingerprints and daily health checks catch failures even with fresh
 session coverage. Optional `memoryGitIdentity:{name,email}` is an explicit authorized
