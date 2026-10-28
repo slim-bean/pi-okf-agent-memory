@@ -41,10 +41,10 @@ test("binary checks share unchanged executable work and reject an edited incompa
     const binary = join(dir, "okf"), count = join(dir, "calls");
     const script = version => '#!' + process.execPath + '\n' +
       'require("node:fs").appendFileSync(' + JSON.stringify(count) + ', "x"); console.log("okf version ' + version + '");\n';
-    writeFileSync(binary, script("v0.4.3")); chmodSync(binary, 0o700);
-    assert.deepEqual(await Promise.all([requireCurrentContractAsync(binary), requireCurrentContractAsync(binary)]), ["v0.4.3", "v0.4.3"]);
+    writeFileSync(binary, script("v0.7.0")); chmodSync(binary, 0o700);
+    assert.deepEqual(await Promise.all([requireCurrentContractAsync(binary), requireCurrentContractAsync(binary)]), ["v0.7.0", "v0.7.0"]);
     assert.equal(readFileSync(count, "utf8"), "x");
-    writeFileSync(binary, script("v0.5.0"));
+    writeFileSync(binary, script("v0.8.0"));
     await assert.rejects(requireCurrentContractAsync(binary), /outside the tested range/);
     assert.equal(readFileSync(count, "utf8"), "xx");
   } finally { rmSync(dir, { recursive: true, force: true }); }

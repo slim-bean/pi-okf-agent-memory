@@ -22,6 +22,6 @@ export async function requireCurrentContractAsync(binary: string): Promise<strin
     void version.catch(() => { if (versions.get(binary) === entry) versions.delete(binary); });
   }
   const version = await entry.version;
-  if (!supportsCurrentContract(version)) throw new Error(`OKF ${version} is outside the tested range >=0.4.3 <0.5.0. Use the bundled binary or correct OKF_BIN, then run /memory-upgrade.`);
+  if (!supportsCurrentContract(version)) throw new Error(`OKF ${version} is outside the tested range >=0.7.0 <0.8.0. Use the bundled binary or correct OKF_BIN, then run /memory-upgrade.`);
   return version;
 }

@@ -57,8 +57,8 @@ after(() => {
 
 test('vendored version, executable selection, checksums, explicit override failure', () => {
   const manifest = JSON.parse(readFileSync(join(root, 'bin/UPSTREAM.json'), 'utf8'));
-  assert.equal(manifest.version, 'v0.4.3');
-  assert.match(cli('--version'), /v0\.4\.3/);
+  assert.equal(manifest.version, 'v0.7.0');
+  assert.match(cli('--version'), /v0\.7\.0/);
   const arch = process.arch === 'x64' ? 'amd64' : process.arch;
   assert.equal(binary, join(root, `bin/okf-${process.platform}-${arch}`));
   for (const [name, sha] of Object.entries(manifest.binaries)) assert.equal(createHash('sha256').update(readFileSync(join(root, 'bin', name))).digest('hex'), sha);
@@ -120,7 +120,7 @@ test('approval is required; canonical instructions, completion, and fresh-sessio
   assert.equal(git(bundle, 'show', 'HEAD:.pi-okf-memory/state.json'), readFileSync(runner(bundle).statePath, 'utf8'));
   assert.equal(git(bundle, 'status', '--porcelain'), '');
   assert.doesNotMatch(git(bundle, 'ls-tree', '-r', '--name-only', 'HEAD'), /lock\.json|finalize-pending|\.state-.*\.tmp/);
-  assert.equal(runner(bundle).readState().completed[0].okfVersion, 'v0.4.3');
+  assert.equal(runner(bundle).readState().completed[0].okfVersion, 'v0.7.0');
   assert.equal(existsSync(runner(bundle).lockPath), false);
   assert.equal(h.statuses.get('okf-upgrade'), undefined);
   const resumed = harness(cwd);

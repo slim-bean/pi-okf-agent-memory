@@ -4,7 +4,7 @@
 
 This is the first tracked upgrade in pi-okf-agent-memory 0.2.0. It applies to both older installations without a ledger and new bundles. Missing state means **unassessed**, not an old format or permission to rewrite anything. An empty, conformant bundle can pass without adding concepts.
 
-The bundled engine is OKF v0.4.3, still using the OKF **v0.2 corpus format**. There is no required format conversion or bulk metadata migration. Currently tested binaries are stable releases >=0.4.3 and <0.5.0. Correct an unsupported `OKF_BIN` with the user's help; do not download or install another binary autonomously.
+The bundled engine is OKF v0.7.0, still using the OKF **v0.2 corpus format**. There is no required format conversion or bulk metadata migration. Currently tested binaries are stable releases >=0.7.0 and <0.8.0. Correct an unsupported `OKF_BIN` with the user's help; do not download or install another binary autonomously.
 
 ## Review
 
@@ -15,7 +15,7 @@ The bundled engine is OKF v0.4.3, still using the OKF **v0.2 corpus format**. Th
    and stale-data findings remain blocking. Inspect both raw strict and effective results.
 2. Inspect any flagged parent-index omissions, description mismatches, broken links, expired facts, and code-reference drift. CLI create/update maintains the immediate parent index, not necessarily root navigation. Check that the root index is still useful; do not infer corpus emptiness from its bullet formatting.
 3. Explain the new semantics: `convention/` concepts implicitly have `constraint` authority; other concepts default to `context`. Explicit `hold` means request human signoff before editing governed code. These are agent workflow rules, not an OS-level sandbox. Do not silently relabel existing concepts.
-4. Optional adoption is **not** a prerequisite: `memory_search(for_path="src/example.ts")` can discover `code_refs`; no need to add bindings to every concept. The 0.4.3 create/update CLI lacks dedicated governance/code_refs flags, so proposed frontmatter edits must be reviewed, preserve provenance, and be validated afterward.
+4. Optional adoption is **not** a prerequisite: `memory_search(for_path="src/example.ts")` can discover `code_refs`; no need to add bindings to every concept. The 0.7 create/update CLI lacks dedicated governance/code_refs flags, so proposed frontmatter edits must be reviewed, preserve provenance, and be validated afterward.
 5. Keep this integration's why-only write budget. Do not run upstream bootstrap over user instructions, enforce AAG, enable Hub sync, or replace this package's skill with upstream's MCP-oriented skill. Those are separate choices.
 
 ## Completion and rollback

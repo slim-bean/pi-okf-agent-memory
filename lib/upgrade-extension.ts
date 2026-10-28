@@ -48,7 +48,7 @@ export function registerUpgrades(pi: ExtensionAPI, options: Options) {
 		const status = runner.status();
 		const binary = options.getBinary();
 		const version = binaryVersion(binary);
-		const compatibility = supportsCurrentContract(version) ? "" : `OKF ${version} is outside the tested range >=0.4.3 <0.5.0. Correct OKF_BIN or use the bundled binary. `;
+		const compatibility = supportsCurrentContract(version) ? "" : `OKF ${version} is outside the tested range >=0.7.0 <0.8.0. Correct OKF_BIN or use the bundled binary. `;
 		const notice = compatibility + (status.pending.length
 			? `pi-okf-agent-memory ${options.packageVersion}: ${status.pending.length} bundle upgrade step(s) pending${status.baseline === "unassessed" ? " (baseline not yet assessed)" : ""}. Run /memory-upgrade to review them in order.${status.locked ? " A review currently holds the bundle lock." : ""}`
 			: status.versionPending

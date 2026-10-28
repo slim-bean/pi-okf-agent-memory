@@ -30,7 +30,7 @@ Use the **resolved executable and bundle paths provided by the extension**, shel
 "$OKF" relate decisions/topic decisions/other "$BUNDLE" --desc "Why these decisions relate"
 ```
 
-CLI create/update maintains the **immediate parent index**. Preserve root navigation separately; do not duplicate every nested concept in the root. Use body flags for prose updates; preserve sources and cite them with matching footnotes. The 0.4.3 CLI has no dedicated governance/code_refs/stale_after flags: use targeted, reviewed frontmatter edits if needed, then validate. Do not pass metadata blocks inside `--body`.
+CLI create/update maintains the **immediate parent index**. Preserve root navigation separately; do not duplicate every nested concept in the root. Use body flags for prose updates; preserve sources and cite them with matching footnotes. The 0.7 CLI supports type/status/tags updates (empty tags explicitly clear them), but has no dedicated governance/code_refs/stale_after flags: use targeted, reviewed frontmatter edits if needed, then validate. Preserve existing human verification without adding or refreshing it as an agent; a superseded verification remains a real validation blocker. Keep search project-local (`--scope=project` for direct CLI searches); registry layers and scorecards are optional, not persistence gates. Do not pass metadata blocks inside `--body`.
 
 ## Trust and lifecycle
 

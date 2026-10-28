@@ -3,9 +3,9 @@
 Source/release/build provenance and SHA-256 digests are in `UPSTREAM.json`.
 Review these notices when refreshing the engine or its dependencies.
 
-## OKF Agent Memory v0.4.3 — MIT
+## OKF Agent Memory v0.7.0 — MIT
 
-https://github.com/okf-memory/okf-agent-memory/tree/v0.4.3
+https://github.com/okf-memory/okf-agent-memory/tree/v0.7.0
 
 Copyright (c) 2026 sknr and the OKF Memory Contributors
 
@@ -27,11 +27,11 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-## Go, golang.org/x/crypto v0.57.0, golang.org/x/sys v0.48.0 — BSD-3-Clause
+## Go, golang.org/x/crypto v0.58.0, golang.org/x/sys v0.49.0 — BSD-3-Clause
 
 https://go.dev/LICENSE
-https://github.com/golang/crypto/blob/v0.57.0/LICENSE
-https://github.com/golang/sys/blob/v0.48.0/LICENSE
+https://github.com/golang/crypto/blob/v0.58.0/LICENSE
+https://github.com/golang/sys/blob/v0.49.0/LICENSE
 
 Copyright 2009 The Go Authors.
 

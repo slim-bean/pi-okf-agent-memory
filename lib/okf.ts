@@ -47,13 +47,13 @@ export function binaryVersion(binary: string): string {
 
 /** Tested release family; unknown/new minor versions require an integration review. */
 export function supportsCurrentContract(version: string): boolean {
-	const match = /^v?0\.4\.(\d+)$/.exec(version);
-	return !!match && Number(match[1]) >= 3;
+	const match = /^v?0\.7\.(\d+)$/.exec(version);
+	return !!match;
 }
 
 export function requireCurrentContract(binary: string): string {
 	const version = binaryVersion(binary);
-	if (!supportsCurrentContract(version)) throw new Error(`OKF ${version} is outside the tested range >=0.4.3 <0.5.0. Use the bundled binary or correct OKF_BIN, then run /memory-upgrade.`);
+	if (!supportsCurrentContract(version)) throw new Error(`OKF ${version} is outside the tested range >=0.7.0 <0.8.0. Use the bundled binary or correct OKF_BIN, then run /memory-upgrade.`);
 	return version;
 }
 

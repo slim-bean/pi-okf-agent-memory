@@ -34,7 +34,7 @@ export interface MemoryMaintenanceRequest {
   protocol: 1; operation: "status" | "upgrade" | "review" | "push";
   context: ExtensionContext; cwd: string; source?: Source; workDir: string; model?: string; push?: boolean;
   signal?: AbortSignal; assertSource?: () => void; onUsage?: (usage: any) => void; onProgress?: (text: string) => void;
-  modelTimeoutMs?: number; maxCost?: number;
+  modelTimeoutMs?: number; maxCost?: number; recoveryMaxTurns?: number;
   memoryOwnership?: "limited" | "full"; memoryGitIdentity?: { name: string; email: string }; modelTranscripts?: boolean;
   onModelEvent?: (event: any) => void;
   onEvent?: (type: string, detail?: unknown) => void;
@@ -264,7 +264,7 @@ export function registerMemoryMaintenance(pi: ExtensionAPI, options: { packageVe
         const upgrade = guide && step ? { id: step.id, guideHash: digest(guide), paths: [join(options.skillsDir, "okf-memory-upgrade", "SKILL.md"), join(options.skillsDir, "okf-memory-upgrade", "steps", step.instructions)] } : undefined;
         const recovered = await autonomousRecovery({ context: r.context, model, binary, bundle, cwd: r.cwd, workDir: r.workDir,
           upgrade, readRoots: [options.skillsDir],
-          operation: r.operation, cause: error, source: r.source, signal, guard, persistModelContext: r.modelTranscripts !== false, maxCost: Math.max(0, (r.maxCost ?? 0.5) - cycleCost), timeoutMs: r.modelTimeoutMs,
+          operation: r.operation, cause: error, source: r.source, signal, guard, persistModelContext: r.modelTranscripts !== false, maxCost: Math.max(0, (r.maxCost ?? 0.5) - cycleCost), timeoutMs: r.modelTimeoutMs, maxTurns: r.recoveryMaxTurns,
           onUsage: account, onProgress: r.onProgress, onModelEvent: r.onModelEvent, onEvent: r.onEvent,
           verify: async completion => {
             guard(); const validation = validated(binary, bundle);

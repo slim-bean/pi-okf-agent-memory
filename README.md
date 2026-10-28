@@ -2,8 +2,18 @@
 
 [pi](https://pi.dev) extension and skills for [OKF Agent Memory](https://github.com/okf-memory/okf-agent-memory): local, Git-native project memory that retains **why** decisions were made without turning session history into a knowledge dump.
 
-Release **0.8.0** bundles **OKF v0.4.3**. The corpus format remains **OKF v0.2**.
-Maintenance accepts open OKF concept types (including Discovery/Research), binds
+Package **0.9.0** bundles **OKF v0.7.0** (previously v0.4.3). The corpus format
+remains **OKF v0.2**. This adopts upstream search relevance, metadata/list
+preservation, drift validation, provenance hardening and log bookkeeping fixes.
+`memory_search` explicitly uses project scope; vendor/user/system layers, registry
+packages, Hub sync and quality scorecards remain opt-in CLI features. Scorecard
+thresholds do not change our advisory-orphan or commit-validation policy.
+Only stable **>=0.7.0 <0.8.0** binaries are supported. There is no new corpus
+migration or upgrade step: existing adoption revalidates and commits a package
+receipt without replaying completed guides. Symlink aliases are canonicalized by
+the wrapper; direct CLI project/vendor root symlinks must satisfy upstream containment.
+
+Maintenance retains the 0.8.0 recovery fixes: it accepts open OKF concept types (including Discovery/Research), binds
 review recovery to the exact source, and detects repeated no-progress opportunities.
 On the next authorized operation, legacy source-unbound recovery triggers are
 archived and current validation/extraction run afresh. Old cases/checkpoints and
@@ -25,8 +35,8 @@ pi -e .
 Install this release using its pinned tag:
 
 ```bash
-pi install git:github.com/slim-bean/pi-okf-agent-memory@v0.8.0
-pi install -l git:github.com/slim-bean/pi-okf-agent-memory@v0.8.0  # project-local
+pi install git:github.com/slim-bean/pi-okf-agent-memory@v0.9.0
+pi install -l git:github.com/slim-bean/pi-okf-agent-memory@v0.9.0  # project-local
 ```
 
 Pinned refs do not move automatically. Select the new tag explicitly, then restart pi or `/reload`. The extension checks project upgrade progress when it loads; it does not poll for available package releases.
@@ -104,7 +114,7 @@ pending. Index discoverability remains separate from semantic relationships.
 
 A bundle with pending work shows a startup notice and persistent status:
 
-> pi-okf-agent-memory 0.8.0: 1 bundle upgrade step pending. Run /memory-upgrade to review it in order.
+> pi-okf-agent-memory 0.9.0: 1 bundle upgrade step pending. Run /memory-upgrade to review it in order.
 
 **Startup inspection is read-only:** setup writes require user confirmation or a bound host setup request. No migration, ledger creation, or agent turn follows setup alone. Upgrade checks run on reload too; a short model-facing warning persists while work is pending. Missing Git setup is reported before upgrade review, not discovered only at its final commit.
 
@@ -114,7 +124,7 @@ A bundle with pending work shows a startup notice and persistent status:
 - Step progress lives in `<bundle>/.pi-okf-memory/state.json`, not a session or global acknowledgment. The runner commits that ledger, its ignore file, and all tracked/non-ignored bundle changes (including pre-existing agent-owned knowledge edits). Shared/symlinked paths resolve to the same state.
 - **Complete means validated and committed.** The last step re-verifies and performs the local commit, then returns its hash. Existing Git identity, signing, and hooks are honored. Unrelated files and staged changes outside an embedded bundle are excluded; locks and temporary files are never included. No push is made.
 - A missing ledger means **unassessed**, including fresh bundles. The first step inspects compatibility; it does not manufacture concepts or convert the corpus format.
-- The first step checks stable OKF **>=0.4.3 <0.5.0** and the zero-blocking-findings validation contract. New code bindings, governance edits, AAG and Hub sync are optional—not required migrations.
+- The first step checks stable OKF **>=0.7.0 <0.8.0** and the zero-blocking-findings validation contract. New code bindings, governance edits, AAG and Hub sync are optional—not required migrations.
 - Reading instructions is not completion; the agent cannot advance by merely asserting success. Structural checks cannot prove semantic correctness or that the model understood the prose—policy decisions still require human review.
 
 ### Status and interruption
@@ -135,7 +145,7 @@ The lock covers review and finalization. Shutdown/session switching releases it;
 
 The runner rejects corrupt/out-of-order/newer state rather than overwriting it. Do not delete the ledger to bypass an upgrade or downgrade; inspect it with a compatible package. If a confirmed dead remote owner left a lock, coordinate with that owner before removing only the lock manually.
 
-Normal read tools remain available during this compatible review; unsupported path-search calls fail explicitly and unsupported validators cannot report `ok:true`. This is not a filesystem sandbox or a global coding lock.
+Normal read tools remain available during this compatible review; unsupported search calls fail explicitly and unsupported validators cannot report `ok:true`. This is not a filesystem sandbox or a global coding lock.
 
 In print/JSON mode, pending status is supplied to the model and available through `memory_upgrade(action="status")`. The interactive command still requires confirmation; a trusted host can instead request an unattended review through the managed interface below. RPC receives supported notifications/dialogs, not TUI widgets.
 
@@ -153,6 +163,11 @@ A host adapter can use the versioned `pi.events` protocol to inspect and run upg
 See **[Managed upgrade protocol](docs/managed-upgrades.md)** for request/response types, lifecycle, maintenance coordination, deadlines, and host-attested crash recovery. **[Example automatic host](examples/managed-host.ts)** shows setup followed by startup/version-change upgrade triggering and is not auto-loaded by the package. This is an in-process cooperative integration, not a new security boundary or authoritative infrastructure audit.
 
 ## Optional idle session maintenance
+
+Full recovery permits `recoveryMaxTurns` model turns per opportunity (default 50,
+whole number 1–100), configured through pi-session-maintenance **0.7.0 or newer**
+using `.pi/maintenance.json` or host settings. Cost budgets, per-call deadlines and cancellation remain independent
+limits. This does not change ordinary extraction’s one-section yield.
 
 Install `pi-session-maintenance` separately to schedule autonomous all-branch
 session reviews and installed-package upgrades. The coordinator discovers this
@@ -228,12 +243,12 @@ marks an upgrade complete. No bundle migration or ledger change is needed.
 ```bash
 npm test
 npm run test:rpc
-node scripts/update-okf.mjs v0.4.3 --static-linux
+node scripts/update-okf.mjs v0.7.0 --static-linux
 ```
 
-Tests locate pi locally or via `npm root --global`; set `PI_TEST_PACKAGE_DIR` to an installed pi package directory to override. They use pi's jiti loader, temporary bundles, mocked UI/hosts, and real CLI/Git calls. The RPC test also launches real pi with isolated settings/offline mode, declines the interactive dialog, then exercises unattended host finalization and its Git receipt. No model calls. An optional read-only `/workspace/knowledge` check skips when absent.
+Tests locate pi locally or via `npm root --global`; set `PI_TEST_PACKAGE_DIR` to an installed pi package directory to override (including versioned pi installations). `test/upstream.mjs` covers project-only scope, metadata/provenance round trips, link drift, scorecards and shared-bundle aliases. They use pi's jiti loader, temporary bundles, mocked UI/hosts, and real CLI/Git calls. The RPC test also launches real pi with isolated settings/offline mode, declines the interactive dialog, then exercises unattended host finalization and its Git receipt. No model calls. An optional read-only `/workspace/knowledge` check skips when absent.
 
-Vendoring verifies all four release assets against upstream SHA-256 checksums before replacing binaries. `--static-linux` (maintainer Go/Git required) rebuilds Linux amd64 from the release tag with CGO disabled: upstream's v0.4.3 asset otherwise requires glibc. The script rejects dynamically linked Linux artifacts. `bin/UPSTREAM.json` distinguishes release checksums from the source-built artifact and records its commit/toolchain/flags. Checksums are not an independent release signature. Keep `bin/NOTICES.md` current when dependencies change. `bin/okf` remains a legacy copy of Linux amd64. No runtime builds or downloads occur.
+Vendoring verifies all four release assets against upstream SHA-256 checksums before replacing binaries. `--static-linux` (maintainer Go/Git required) rebuilds Linux amd64 from the release tag with CGO disabled: upstream Linux builds may otherwise require glibc. The script rejects dynamically linked Linux artifacts. `bin/UPSTREAM.json` distinguishes release checksums from the source-built artifact and records its commit/toolchain/flags. Checksums are not an independent release signature. Keep `bin/NOTICES.md` current when dependencies change. `bin/okf` remains a legacy copy of Linux amd64. No runtime builds or downloads occur.
 
 - `index.ts`: native tools, session context, commands.
 - `lib/setup.ts` / `lib/setup-extension.ts`: deterministic Git-backed setup, interactive consent, and explicit host setup protocol.

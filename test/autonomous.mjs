@@ -120,7 +120,7 @@ test('unchanged checkpoints do not count as progress; three no-op opportunities 
     await f.run('upgrade');seedInvalid(f);
     for(let i=1;i<=3;i++) {
       f.sequence=Array.from({length:8},()=>tool('bash',{command:'printf "read-only investigation"'}));
-      await assert.rejects(f.run('review'),e=>i<3 ? e.kind==='deferred'&&e.code==='memory-recovery-pending' : e.kind==='error'&&e.code==='memory-recovery-stalled'&&e.detail.recovery.noProgress===3);
+      await assert.rejects(f.run('review',{recoveryMaxTurns:8}),e=>i<3 ? e.kind==='deferred'&&e.code==='memory-recovery-pending' : e.kind==='error'&&e.code==='memory-recovery-stalled'&&e.detail.recovery.noProgress===3);
       if(i===1) {
         const casePath=f.events.find(e=>e.type==='recovery').detail.casePath;
         const state=JSON.parse(readFileSync(casePath,'utf8'));
@@ -207,11 +207,41 @@ test('limited ownership remains limited and never launches a broad recovery work
   }finally{await f.close()}
 });
 
+test('direct maintenance hosts cannot supply invalid recovery turn limits',async()=>{
+  const f=fixture();
+  try {
+    await f.run('upgrade');seedInvalid(f);const before=f.calls;
+    for (const recoveryMaxTurns of [0,-1,101,1.5,'50',Infinity]) {
+      await assert.rejects(f.run('review',{recoveryMaxTurns}),/recoveryMaxTurns/);
+    }
+    assert.equal(f.calls,before);
+  }finally{await f.close()}
+});
+
+for (const limit of [undefined, 3, 75]) test(`recovery turn limit ${limit ?? 'default 50'} yields at the exact model-call boundary and resumes`,async()=>{
+  const f=fixture();
+  try {
+    await f.run('upgrade');seedInvalid(f);
+    const expected=limit??50;const before=f.calls;
+    f.sequence=Array.from({length:expected},()=>tool('read',{path:'../evidence.txt'}));
+    const settings={maxCost:2,...(limit===undefined?{}:{recoveryMaxTurns:limit})};
+    await assert.rejects(f.run('review',settings),e=>e.code==='memory-recovery-pending'&&e.message.includes(`after ${expected} model turns`));
+    assert.equal(f.calls-before,expected);
+    const casePath=f.events.find(e=>e.type==='recovery').detail.casePath;
+    const state=JSON.parse(readFileSync(casePath,'utf8'));
+    assert.equal(state.status,'pending');assert.equal(state.messages.filter(m=>m.role==='toolResult').length,expected);
+    f.sequence=evidenceRepair(f);
+    assert.equal((await f.run('review',settings)).detail.recovered,true);
+  }finally{await f.close()}
+});
+
 test('recovery budget yields durable progress and resumes automatically without repeating a completed tool',async()=>{
   const f=fixture();
   try {
     await f.run('upgrade');seedInvalid(f);f.sequence=evidenceRepair(f);
-    await assert.rejects(f.run('review',{maxCost:.015}),e=>e.kind==='deferred'&&e.code==='memory-recovery-pending');
+    const before=f.calls;
+    await assert.rejects(f.run('review',{maxCost:.015,recoveryMaxTurns:100}),e=>e.kind==='deferred'&&e.code==='memory-recovery-pending'&&/budget/.test(e.message));
+    assert.equal(f.calls-before,2,'cost budget stops recovery before its generous turn limit');
     const progress=f.events.find(e=>e.type==='recovery-progress');
     assert.equal(progress.detail.changed,true);assert.equal(progress.detail.noProgress,0,'actual partial repairs count as progress');
     const tools=f.events.filter(e=>e.type==='recovery-tool').length;const calls=f.calls;
@@ -224,7 +254,7 @@ test('false model completion cannot complete invalid memory or wait for a human;
   const f=fixture();
   try {
     await f.run('upgrade');seedInvalid(f);f.sequence=Array.from({length:8},()=>stop('Done; ask a human for repair approval.'));
-    await assert.rejects(f.run('review'),e=>e.kind==='deferred'&&e.code==='memory-recovery-pending');
+    await assert.rejects(f.run('review',{recoveryMaxTurns:8}),e=>e.kind==='deferred'&&e.code==='memory-recovery-pending');
     assert.equal(validateBundle(binary,f.bundle).ok,false);
     f.sequence=evidenceRepair(f);assert.equal((await f.run('review')).detail.recovered,true);
   }finally{await f.close()}
@@ -247,7 +277,7 @@ test('an unsupported model claim of an external blocker cannot park repair await
   try {
     await f.run('upgrade');seedInvalid(f);
     f.sequence=Array.from({length:8},()=>stop(JSON.stringify({external:{code:'permission',reason:'Claimed read-only mount without operational evidence.'}})));
-    await assert.rejects(f.run('review'),e=>e.code==='memory-recovery-pending');
+    await assert.rejects(f.run('review',{recoveryMaxTurns:8}),e=>e.code==='memory-recovery-pending');
     f.sequence=evidenceRepair(f);assert.equal((await f.run('review')).detail.recovered,true);
   }finally{await f.close()}
 });

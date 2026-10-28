@@ -37,7 +37,7 @@ try {
     releaseChecksums[name] = sha256;
   }
   if (staticLinux) {
-    // Upstream v0.4.3's linux-amd64 release enables CGO and requires glibc.
+    // Upstream Linux builds may enable CGO and require glibc.
     // Preserve this package's static Linux portability; never call this at runtime.
     const source = join(staging, 'source');
     execFileSync('git', ['clone', '--quiet', '--depth', '1', '--branch', version, 'https://github.com/okf-memory/okf-agent-memory.git', source], { stdio: 'pipe' });

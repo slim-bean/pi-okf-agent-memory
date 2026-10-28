@@ -78,8 +78,8 @@ export default function okfMemoryExtension(pi: ExtensionAPI) {
 			// help request even in query position. Never pass tool input as options.
 			if (query && (query.startsWith("-") || query === "help")) throw new Error("This OKF CLI cannot search a query starting with '-' or the exact word 'help'; use more specific search terms.");
 			if (params.limit !== undefined && (!Number.isInteger(params.limit) || params.limit < 1 || params.limit > 100)) throw new Error("limit must be an integer from 1 to 100.");
-			if (path) requireCurrentContract(binary);
-			const args = ["search", ...(query ? [query] : []), dir, "--json", `--limit=${params.limit ?? 10}`, ...(path ? [`--for-path=${path}`] : [])];
+			requireCurrentContract(binary);
+			const args = ["search", ...(query ? [query] : []), dir, "--scope=project", "--json", `--limit=${params.limit ?? 10}`, ...(path ? [`--for-path=${path}`] : [])];
 			return { content: [{ type: "text", text: fit(runOkf(binary, args).stdout) }], details: { query, for_path: path } };
 		},
 	});

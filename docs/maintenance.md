@@ -20,6 +20,7 @@ Requests on `okf:maintenance:v1` assign `request.result` synchronously:
   workDir,                 // absolute private host-owned checkpoint directory OUTSIDE bundle
   memoryOwnership?,        // limited | full; host override is standing authority
   memoryGitIdentity?,      // explicit authorized {name,email}, applied only in full mode
+  recoveryMaxTurns?,       // full recovery model calls per opportunity, default 50; integer 1–100
   maxCost?,                // approximate per-opportunity recovery budget, default 0.5
   modelTranscripts?,       // false omits durable provider context in recovery cases
   model?,                  // provider/model-id; defaults to context.model
@@ -96,7 +97,8 @@ snapshots are capped at 8 MiB. Owner-only permission metadata can be repaired be
 locking/checkpoint reads when the agent owns the files; no symlink traversal,
 foreign UID rights or Git-object mode changes. Private work inside a bundle is refused.
 
-Each opportunity permits at most eight sequential recovery calls, bounded by
+Each opportunity permits at most `recoveryMaxTurns` sequential recovery calls
+(default 50, whole number 1–100), bounded independently by the
 reported-cost allowance and per-call deadline; shell commands have a 60s bound.
 Opportunity exhaustion defers durable progress for automatic continuation; transient
 provider failures back off without asking a human. Content fingerprints at opportunity

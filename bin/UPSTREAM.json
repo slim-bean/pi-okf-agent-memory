@@ -1,17 +1,17 @@
 {
   "repository": "https://github.com/okf-memory/okf-agent-memory",
-  "version": "v0.4.3",
-  "checksumsURL": "https://github.com/okf-memory/okf-agent-memory/releases/download/v0.4.3/checksums.txt",
+  "version": "v0.7.0",
+  "checksumsURL": "https://github.com/okf-memory/okf-agent-memory/releases/download/v0.7.0/checksums.txt",
   "releaseChecksums": {
-    "okf-darwin-amd64": "efc09e7ccfc3da3b73c0bc54b07a5b60b3180747ab29a5aec8cd2ffc8b36bbdb",
-    "okf-darwin-arm64": "be6ae1e0038a5cef0482a5d7b512d777d76308ba0d86bfd19bf6cd85233f882f",
-    "okf-linux-amd64": "485761b084069b1299fa4a480df96cdac28894fc126bfffe20afd70731d7f037",
-    "okf-linux-arm64": "c7ba349f3ff13e2cddf859ec69a673c9ff35cd4d093054cd1bf0b4e3f97cdd4a"
+    "okf-darwin-amd64": "5e6f4185748865241f5d156a88f5935dc57142054f6560212b1a5de6eb1367b3",
+    "okf-darwin-arm64": "009d70ebf067e19463fe238eb380109f64b270c3cc194ae6a53f25d31cf187f9",
+    "okf-linux-amd64": "e44bc08ee2b150871d69182bcfe04712669be4196566cde65d77620b2e8c43f1",
+    "okf-linux-arm64": "ad6266e37b85d69c66488e8dfe3af051b6d44d845fad94f25820d52df4db8d39"
   },
   "sourceBuilds": {
     "okf-linux-amd64": {
-      "commit": "68bddd551bd8e09be80f31b08f08ceeb50bc076d",
-      "toolchain": "go version go1.26.4 darwin/arm64",
+      "commit": "976d2dbcdb1c48f961990f5e11e1693f51bd0dcb",
+      "toolchain": "go version go1.27.1 darwin/arm64",
       "CGO_ENABLED": "0",
       "GOOS": "linux",
       "GOARCH": "amd64",
@@ -19,16 +19,16 @@
       "flags": [
         "-trimpath",
         "-ldflags",
-        "-s -w -X main.Version=v0.4.3 -X main.Commit=68bddd5"
+        "-s -w -X main.Version=v0.7.0 -X main.Commit=976d2db"
       ],
       "package": "./cmd/okf"
     }
   },
   "binaries": {
-    "okf-darwin-amd64": "efc09e7ccfc3da3b73c0bc54b07a5b60b3180747ab29a5aec8cd2ffc8b36bbdb",
-    "okf-darwin-arm64": "be6ae1e0038a5cef0482a5d7b512d777d76308ba0d86bfd19bf6cd85233f882f",
-    "okf-linux-amd64": "229fd0320df9a66903c54ee87f1c52cf2e031b1fa08ab5e06fa82cb54cf6bd9d",
-    "okf-linux-arm64": "c7ba349f3ff13e2cddf859ec69a673c9ff35cd4d093054cd1bf0b4e3f97cdd4a",
-    "okf": "229fd0320df9a66903c54ee87f1c52cf2e031b1fa08ab5e06fa82cb54cf6bd9d"
+    "okf-darwin-amd64": "5e6f4185748865241f5d156a88f5935dc57142054f6560212b1a5de6eb1367b3",
+    "okf-darwin-arm64": "009d70ebf067e19463fe238eb380109f64b270c3cc194ae6a53f25d31cf187f9",
+    "okf-linux-amd64": "8309c00fd8f22f887e8b323fd7f660ab3818df1a4eb8f793a230d84365054e86",
+    "okf-linux-arm64": "ad6266e37b85d69c66488e8dfe3af051b6d44d845fad94f25820d52df4db8d39",
+    "okf": "8309c00fd8f22f887e8b323fd7f660ab3818df1a4eb8f793a230d84365054e86"
   }
 }

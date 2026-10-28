@@ -48,11 +48,13 @@ export async function autonomousRecovery(options: {
   context: ExtensionContext; model: NonNullable<ExtensionContext["model"]>; binary: string; bundle: string; cwd: string;
   workDir: string; operation: string; cause: unknown; source?: unknown; signal: AbortSignal; guard(): void;
   upgrade?: { id: string; guideHash: string; paths: string[] }; readRoots?: string[];
-  maxCost?: number; timeoutMs?: number; persistModelContext?: boolean; onUsage?: (usage: any) => void; onProgress?: (text: string) => void;
+  maxCost?: number; maxTurns?: number; timeoutMs?: number; persistModelContext?: boolean; onUsage?: (usage: any) => void; onProgress?: (text: string) => void;
   onModelEvent?: (event: any) => void; onEvent?: (type: string, detail?: unknown) => void;
   verify(completion?: any): unknown | Promise<unknown>;
 }): Promise<{ casePath: string; evidence: unknown }> {
   const { bundle, signal } = options;
+  const maxTurns = options.maxTurns ?? 50;
+  if (!Number.isSafeInteger(maxTurns) || maxTurns < 1 || maxTurns > 100) throw new Error("recoveryMaxTurns must be a whole number from 1 to 100");
   // A review attests one exact source, never whichever queued session happens
   // to get the next executor slot. Legacy cases remain intact as evidence.
   const source = options.source as { path?: string; hash?: string } | undefined;
@@ -131,7 +133,7 @@ export async function autonomousRecovery(options: {
   options.onProgress?.(`memory recovery: autonomous investigation (attempt ${state.attempts})`);
   options.onEvent?.("recovery", { ownership: "full", casePath, cause, attempt: state.attempts });
   try {
-    for (let turn = 0; turn < 8; turn++) {
+    for (let turn = 0; turn < maxTurns; turn++) {
       options.guard();
       if (cost >= (options.maxCost ?? 0.5)) pending("Autonomous recovery reached this opportunity's model budget; progress retained for automatic continuation.");
       const response = await maintenanceModel({ context: options.context, model: options.model, input: { systemPrompt, messages: state.messages, tools: declarations },
@@ -212,7 +214,7 @@ export async function autonomousRecovery(options: {
         options.onModelEvent?.({ type: "tool-result", message });
       }
     }
-    return pending("Recovery yielded after eight model turns; context retained, but no completion verified. It will retry at the next safe idle opportunity.");
+    return pending(`Recovery yielded after ${maxTurns} model turns (recoveryMaxTurns=${maxTurns}); context retained, but no completion verified. It will retry at the next safe idle opportunity.`);
   } catch (error) {
     if (signal.aborted) { state.status = "interrupted"; atomic(casePath, state); signal.throwIfAborted(); }
     if ((error as MemoryMaintenanceIssue)?.code === "model-auth") {
