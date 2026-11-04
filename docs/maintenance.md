@@ -185,8 +185,14 @@ whole-repository reconciliation is not granted for unrelated enclosing project s
   earlier claims rather than erase provenance. Held/human-verified concepts are
   not automatically modified in limited mode. Full ownership grants investigation
   and warranted corrections, preserving historical provenance; it does not fabricate verification.
-- Corpus input is capped at 180,000 serialized characters and checked against
-  model context; oversized input fails explicitly, never silently drops evidence.
+- Corpus loading has no fixed character cap. Before each model call, the complete
+  serialized request (prompt, source, corpus and tools) is estimated at one token
+  per two characters, plus the output allowance and 1,000 overhead tokens, against
+  the selected model’s context window. This is a heuristic, not provider tokenization.
+  Oversized input reports `memory-context-capacity` with sizing details; it never
+  silently drops evidence. Choose a larger-context model or use explicitly authorized
+  full-ownership recovery, which can inspect files through tools. Validation and
+  checkpoint freshness reads are not subject to a model-input limit.
 - Concept extraction uses the bundled OKF CLI and maintains root/immediate indexes.
   Structural repair uses checkpointed exact Markdown writes to preserve all metadata. Validation
   must have zero blocking findings; isolation is advisory unless OKF_ORPHAN_POLICY

@@ -26,7 +26,10 @@ pi-okf-agent-memory integrates a local OKF v0.2 corpus with pi. Read `README.md`
   onModelEvent/onEvent callbacks expose parsed model streams and operational results to a host;
   never include auth/transport options, start another foreground agent/pi process, or release ownership before an aborted stream settles.
   model-deadline.ts preserves the first cancellation cause and elapsed/deadline metadata;
-  modelTimeoutMs overrides the default 600s deadline. Native response messages stay
+  modelTimeoutMs overrides the default 600s deadline. Corpus reads have no fixed size
+  cap; maintenance-model.ts admits complete requests against the selected context
+  window with input estimates/output reserve, never by truncating evidence.
+  Native response messages stay
   unchanged; additive end-event diagnostics distinguish timeout from provider abortion.
   Own-deadline timeouts and `length` stops are structured `model-timeout`/`model-output-limit`
   issues; review halves only the failing section via a persisted split marker (never re-splits

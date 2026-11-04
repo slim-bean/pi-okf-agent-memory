@@ -55,6 +55,56 @@ test('capability is read-only; unattended upgrades and no-change review commit w
   } finally {f.close()}
 });
 
+test('corpora above the former fixed cap reach the model intact and cached review stays reusable',async()=>{
+  const f=fixture();
+  try {
+    await f.run('upgrade');
+    const bodies=Array.from({length:4},(_,i)=>`Topic ${i}: `+'Independent durable rationale. '.repeat(1800));
+    bodies.forEach((body,i)=>cli('create',`large-${i}`,f.bundle,'--title',`Large topic ${i}`,'--desc','Durable independent rationale.','--body',body));
+    const expected=bodies.map((_,i)=>readFileSync(join(f.bundle,`large-${i}.md`),'utf8'));
+    let corpusChars=0;
+    f.response=input=>{
+      const {corpus}=JSON.parse(input.messages[0].content);
+      corpusChars=JSON.stringify(corpus).length;
+      assert.ok(corpusChars>180000);
+      expected.forEach((bytes,i)=>assert.equal(corpus[`large-${i}.md`],bytes));
+      return {reviewed:true,changes:[]};
+    };
+    assert.equal((await f.run('review')).complete,true);
+    assert.ok(corpusChars>180000);
+    const calls=f.calls;
+    // Validation/freshness reads and cached receipts need no model context.
+    f.h.ctx.model.contextWindow=1000;
+    assert.equal((await f.run('review')).complete,true);
+    assert.equal(f.calls,calls);
+    assert.equal(git(f.bundle,'status','--porcelain'),'');
+  } finally {f.close()}
+});
+
+test('complete-request admission rejects insufficient model context before calling and can resume',async()=>{
+  const f=fixture();
+  try {
+    await f.run('upgrade');
+    const calls=f.calls, head=git(f.bundle,'rev-parse','HEAD');
+    f.h.ctx.model.contextWindow=1000;
+    await assert.rejects(f.run('review'),e=>{
+      assert.equal(e.code,'memory-context-capacity');
+      assert.equal(e.kind,'deferred');
+      assert.equal(e.resource,'fake/offline');
+      assert.equal(e.detail.contextWindow,1000);
+      assert.ok(e.detail.estimatedInputTokens+e.detail.maxTokens+e.detail.overheadTokens>1000);
+      assert.match(e.message,/not silently truncated/);
+      return true;
+    });
+    assert.equal(f.calls,calls);
+    assert.equal(git(f.bundle,'rev-parse','HEAD'),head);
+    assert.equal(git(f.bundle,'status','--porcelain'),'');
+    f.h.ctx.model.contextWindow=200000;
+    assert.equal((await f.run('review')).complete,true);
+    assert.equal(f.calls,calls+1);
+  } finally {f.close()}
+});
+
 test('optional model and operation observers capture exact prompts, parsed deltas, usage and commit references',async()=>{
   const f=fixture();const events=[];const operations=[];let cost=0;
   try {

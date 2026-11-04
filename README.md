@@ -80,6 +80,10 @@ Optional environment variables:
 | `/knowledge-review` | Review this session for durable rationale; most reviews need no writes |
 | `/memory-upgrade` | Confirm and start/resume an ordered upgrade review |
 
+Unattended review admits the complete request against the selected model’s context
+window, not a fixed corpus-character cap. Oversized requests report sizing details
+without truncating evidence; see [maintenance limits](docs/maintenance.md#execution-and-limits).
+
 Session startup/resume/fork queues the index or an empty-corpus hint. Concept count comes from the CLI, not root-index formatting. The normal skill teaches search-before-write, governance, provenance, and the why-only write budget.
 
 ## Binary diagnostics

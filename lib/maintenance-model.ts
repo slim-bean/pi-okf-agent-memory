@@ -19,7 +19,15 @@ export async function maintenanceModel(options: {
   signal.throwIfAborted();
   if (!context.modelRegistry.hasConfiguredAuth(model)) throw new MemoryMaintenanceIssue("blocked", "model-auth", modelKey, `No configured auth for ${modelKey}`);
   const maxTokens = outputBudget(model);
-  if (JSON.stringify(input).length / 2 + maxTokens + 1000 > model.contextWindow) throw new MemoryMaintenanceIssue("deferred", "memory-context-capacity", modelKey, "Maintenance input exceeds model context; evidence was not silently truncated.");
+  // Admit the complete request, not a fixed-size corpus: prompt, source, tools and
+  // output reserve all compete for the selected model's context. This is an
+  // estimate, not an exact provider tokenizer; never truncate evidence to fit.
+  const inputChars = JSON.stringify(input).length;
+  const estimatedInputTokens = Math.ceil(inputChars / 2);
+  const overheadTokens = 1000;
+  if (estimatedInputTokens + maxTokens + overheadTokens > model.contextWindow) throw new MemoryMaintenanceIssue("deferred", "memory-context-capacity", modelKey,
+    `Maintenance input exceeds ${modelKey} context (${estimatedInputTokens} estimated input + ${maxTokens} output + ${overheadTokens} overhead tokens > ${model.contextWindow}). Use a larger-context model or full-ownership recovery; evidence was not silently truncated.`,
+    { inputChars, estimatedInputTokens, maxTokens, overheadTokens, contextWindow: model.contextWindow });
   const local = new AbortController();
   const deadline = modelDeadline([signal, local.signal], options.timeoutMs);
   // Our own deadline is a structured capacity failure; caller cancellation keeps its original cause.

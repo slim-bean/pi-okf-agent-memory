@@ -52,7 +52,6 @@ function corpus(bundle: string): Record<string, string> {
     }
   };
   walk(bundle);
-  if (JSON.stringify(result).length > 180_000) throw new Error("Knowledge corpus exceeds the unattended full-corpus review budget; no content was silently omitted");
   return result;
 }
 function atomic(path: string, data: unknown) {
@@ -337,10 +336,14 @@ export function registerMemoryMaintenance(pi: ExtensionAPI, options: { packageVe
             `\n${guide}\nReview ALL supplied branches. Off-branch does not mean rejected. Distinguish accepted decisions, proposals, contradicted claims and verified outcomes. Preserve dates and qualify uncertainty; do not invent implementation evidence.\n` +
             (format ?? `Return ONLY JSON {"reviewed":true,"changes":[{"concept":"decisions/topic","title":"...","description":"...","body":"durable rationale/addendum or explicit correction","type":"Decision","entries":[1]}]}. Most reviews changes:[]. Search the supplied complete corpus before proposing writes. Existing concepts receive an attributed ADDENDUM, not replacement. No governance edits, migrations, dates falsely advanced, shell actions, deletion, approval or unrelated writes. For upgrade guides, attest reviewed:true only after inspecting the contract; if repairs are outside these permitted concept operations, return {"blocked":"reason"}.`) +
             `\nOUTPUT BUDGET: your whole response, including any reasoning, must fit within ${budget} output tokens. Keep reasoning brief and bodies concise so the complete JSON (well under ${budget * 2} characters) is never cut off.`;
-          modelCalls++;
           const response = await maintenanceModel({ context: r.context, model, input: { systemPrompt,
             messages: [{ role: "user", content: JSON.stringify({ source: input, corpus: known }), timestamp: Date.now() }] },
-            signal, timeoutMs: r.modelTimeoutMs, onUsage: account, onModelEvent: r.onModelEvent });
+            signal, timeoutMs: r.modelTimeoutMs, onUsage: account, onModelEvent: event => {
+              // Admission failures did not run a model: full recovery can use
+              // this opportunity rather than queueing a needless extra cycle.
+              if (event.type === "start") modelCalls++;
+              r.onModelEvent?.(event);
+            } });
           return response.content.filter((b) => b.type === "text").map((b: any) => b.text).join("\n");
         };
         if (r.operation === "review" && (!r.source || r.source.cwd !== r.cwd || digest(r.source.entries) !== r.source.hash)) throw new Error("Invalid review source snapshot");
