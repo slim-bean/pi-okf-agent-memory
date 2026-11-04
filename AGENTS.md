@@ -1,6 +1,6 @@
 # AGENTS.md
 
-pi-okf-agent-memory integrates a local OKF v0.2 corpus with pi. Read `README.md` for usage, upgrade behavior, and development commands. The current package version is 0.9.0, bundling OKF v0.7.0.
+pi-okf-agent-memory integrates a local OKF v0.2 corpus with pi. Read `README.md` for usage, upgrade behavior, and development commands. The current package version is 0.10.0, bundling OKF v0.7.0.
 
 ## Layout
 
