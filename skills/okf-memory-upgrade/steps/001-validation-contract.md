@@ -4,7 +4,7 @@
 
 This is the first tracked upgrade in pi-okf-agent-memory 0.2.0. It applies to both older installations without a ledger and new bundles. Missing state means **unassessed**, not an old format or permission to rewrite anything. An empty, conformant bundle can pass without adding concepts.
 
-The bundled engine is OKF v0.7.0, still using the OKF **v0.2 corpus format**. There is no required format conversion or bulk metadata migration. Currently tested binaries are stable releases >=0.7.0 and <0.8.0. Correct an unsupported `OKF_BIN` with the user's help; do not download or install another binary autonomously.
+The bundled engine is OKF v0.8.0, still using the OKF **v0.2 corpus format**. There is no required format conversion or bulk metadata migration. Currently tested binaries are stable releases >=0.7.0 and <0.9.0. Correct an unsupported `OKF_BIN` with the user's help; do not download or install another binary autonomously.
 
 ## Review
 

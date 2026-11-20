@@ -44,7 +44,7 @@ function indexEdits(binary: string, bundle: string, files: Files): Edit[] {
     if (posix.basename(file) === "index.md") continue;
     const id = file.slice(0, -3);
     let metadata;
-    try { metadata = JSON.parse(runOkf(binary, ["show", id, bundle, "--json"]).stdout); }
+    try { metadata = JSON.parse(runOkf(binary, ["show", `okf://project/${id}`, bundle, "--json"]).stdout); }
     catch { continue; } // malformed concept metadata remains a real validation blocker
     if (typeof metadata.title !== "string" || typeof metadata.description !== "string") continue;
     add(posix.join(posix.dirname(file), "index.md"), posix.basename(file), metadata.title, metadata.description);

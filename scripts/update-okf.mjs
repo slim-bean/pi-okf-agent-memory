@@ -9,8 +9,11 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const version = process.argv[2];
-if (!/^v\d+\.\d+\.\d+$/.test(version ?? '') || process.argv.slice(3).some(arg => arg !== '--static-linux')) throw Error('Usage: node scripts/update-okf.mjs vX.Y.Z [--static-linux]');
-const staticLinux = process.argv.includes('--static-linux');
+const options = process.argv.slice(3);
+if (!/^v\d+\.\d+\.\d+$/.test(version ?? '') || options.some(arg => !['--static-linux', '--source-all'].includes(arg) && !/^--commit=[a-f0-9]{40}$/.test(arg))) throw Error('Usage: node scripts/update-okf.mjs vX.Y.Z [--static-linux | --source-all] [--commit=SHA]');
+const sourceAll = options.includes('--source-all');
+const staticLinux = sourceAll || options.includes('--static-linux');
+const expectedCommit = options.find(arg => arg.startsWith('--commit='))?.slice('--commit='.length);
 const root = fileURLToPath(new URL('../', import.meta.url));
 const base = `https://github.com/okf-memory/okf-agent-memory/releases/download/${version}`;
 const names = ['okf-darwin-amd64', 'okf-darwin-arm64', 'okf-linux-amd64', 'okf-linux-arm64'];
@@ -42,11 +45,17 @@ try {
     const source = join(staging, 'source');
     execFileSync('git', ['clone', '--quiet', '--depth', '1', '--branch', version, 'https://github.com/okf-memory/okf-agent-memory.git', source], { stdio: 'pipe' });
     const commit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: source, encoding: 'utf8' }).trim();
+    if (expectedCommit && commit !== expectedCommit) throw Error(`Source tag changed: expected ${expectedCommit}, got ${commit}`);
     const toolchain = execFileSync('go', ['version'], { encoding: 'utf8' }).trim();
-    const args = ['build', '-trimpath', '-ldflags', `-s -w -X main.Version=${version} -X main.Commit=${commit.slice(0, 7)}`, '-o', join(staging, 'okf-linux-amd64'), './cmd/okf'];
-    execFileSync('go', args, { cwd: source, env: { ...process.env, CGO_ENABLED: '0', GOOS: 'linux', GOARCH: 'amd64', GOAMD64: 'v1', GOWORK: 'off', GOFLAGS: '' }, stdio: 'inherit' });
-    binaries['okf-linux-amd64'] = createHash('sha256').update(await readFile(join(staging, 'okf-linux-amd64'))).digest('hex');
-    sourceBuilds['okf-linux-amd64'] = { commit, toolchain, CGO_ENABLED: '0', GOOS: 'linux', GOARCH: 'amd64', GOAMD64: 'v1', flags: ['-trimpath', ...args.slice(2, 4)], package: './cmd/okf' };
+    // Rebuilding every target permits security-patched toolchains even when the
+    // upstream release assets were compiled with an older standard library.
+    for (const name of sourceAll ? names : ['okf-linux-amd64']) {
+      const [, os, arch] = name.split('-');
+      const args = ['build', '-mod=readonly', '-trimpath', '-ldflags', `-s -w -X main.Version=${version} -X main.Commit=${commit.slice(0, 7)}`, '-o', join(staging, name), './cmd/okf'];
+      execFileSync('go', args, { cwd: source, env: { ...process.env, CGO_ENABLED: '0', GOOS: os, GOARCH: arch, GOAMD64: 'v1', GOARM64: 'v8.0', GOWORK: 'off', GOTOOLCHAIN: 'local', GOFLAGS: '' }, stdio: 'inherit' });
+      binaries[name] = createHash('sha256').update(await readFile(join(staging, name))).digest('hex');
+      sourceBuilds[name] = { commit, toolchain, CGO_ENABLED: '0', GOOS: os, GOARCH: arch, ...(arch === 'amd64' ? { GOAMD64: 'v1' } : { GOARM64: 'v8.0' }), flags: args.slice(1, 5), package: './cmd/okf' };
+    }
   }
   for (const name of ['okf-linux-amd64', 'okf-linux-arm64']) {
     const elf = await readFile(join(staging, name));
@@ -67,7 +76,7 @@ try {
     repository: 'https://github.com/okf-memory/okf-agent-memory', version,
     checksumsURL: `${base}/checksums.txt`, releaseChecksums, sourceBuilds, binaries,
   }, null, 2) + '\n');
-  console.log(`Vendored ${version}; verified upstream assets${staticLinux ? ' and rebuilt static Linux amd64 from the tagged source' : ''} before replacing binaries.`);
+  console.log(`Vendored ${version}; verified upstream assets${sourceAll ? ' and rebuilt all targets from the tagged source' : staticLinux ? ' and rebuilt static Linux amd64 from the tagged source' : ''} before replacing binaries.`);
 } finally {
   await rm(staging, { recursive: true, force: true });
 }

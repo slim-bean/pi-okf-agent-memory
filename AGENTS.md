@@ -1,12 +1,12 @@
 # AGENTS.md
 
-pi-okf-agent-memory integrates a local OKF v0.2 corpus with pi. Read `README.md` for usage, upgrade behavior, and development commands. The current package version is 0.10.0, bundling OKF v0.7.0.
+pi-okf-agent-memory integrates a local OKF v0.2 corpus with pi. Read `README.md` for usage, upgrade behavior, and development commands. The current package version is 0.10.1, bundling OKF v0.8.0.
 
 ## Layout
 
 - `index.ts`: tools, knowledge-review/context commands, session index injection.
 - `lib/okf.ts`: binary/bundle resolution and structured CLI diagnostics. Supported
-  binaries are stable >=0.7.0 <0.8.0; keep synchronous/async checks aligned.
+  binaries are stable >=0.7.0 <0.9.0; keep synchronous/async checks aligned.
   `memory_search` explicitly selects project scope, never upstream's default all.
   Scorecards/registry/layering are optional, not new commit gates or migrations.
 - `lib/diagnostics.ts`: read-only /memory-diagnostics and typed okf-binary blockers.
@@ -69,7 +69,7 @@ pi-okf-agent-memory integrates a local OKF v0.2 corpus with pi. Read `README.md`
 - `skills/okf-memory/`: why-only budget and normal memory workflow.
 - `skills/okf-memory-upgrade/`: review skill plus ordered historical step guides.
 - `bin/`: standalone macOS/Linux arm64/amd64 binaries; `UPSTREAM.json` records release checksums. `bin/okf` is the legacy Linux amd64 copy.
-- `scripts/update-okf.mjs`: maintainer-only vendoring from an explicit release tag; verify release checksums, use `--static-linux` to retain CGO-free Linux portability. Preserve `bin/NOTICES.md` for bundled dependencies.
+- `scripts/update-okf.mjs`: maintainer-only vendoring from an explicit release tag; verify release checksums, use `--source-all --commit=SHA` with a verified toolchain to rebuild all targets and retain CGO-free Linux portability. Preserve `bin/NOTICES.md` for bundled dependencies.
 - `install.sh`: resource-only local-copy installation; ship helper modules, package metadata, binaries, and both skills. Use shared session setup, not a second shell bootstrap.
 - `test/setup.mjs` / `test/smoke.mjs` / `test/managed.mjs`: portable jiti/real-CLI/Git fixtures and mock pi API/hosts (`npm test`). `npm run test:rpc` checks real pi startup/dialogs offline without model calls. Optional `/workspace/knowledge` checks stay read-only and skip when absent. Use `PI_TEST_PACKAGE_DIR` for a nonstandard installed pi.
 
