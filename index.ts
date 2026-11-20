@@ -93,7 +93,10 @@ export default function okfMemoryExtension(pi: ExtensionAPI) {
 			const dir = requireKnowledge(ctx.cwd);
 			const concept = params.concept.replace(/\.md$/, "");
 			if (!concept || concept.startsWith("-") || concept === "help") throw new Error("Supply a concept ID, not a CLI flag/help request.");
-			return { content: [{ type: "text", text: fit(runOkf(requireBin(ctx.cwd), ["show", concept, dir, "--json"]).stdout) }], details: { concept } };
+			// OKF 0.8 falls back from bare IDs to user/system layers. Preserve
+			// project-local bare IDs while retaining deliberate scoped references.
+			const scoped = /^(?:okf:\/\/|@|user:|system:)/.test(concept) ? concept : `okf://project/${concept}`;
+			return { content: [{ type: "text", text: fit(runOkf(requireBin(ctx.cwd), ["show", scoped, dir, "--json"]).stdout) }], details: { concept } };
 		},
 	});
 

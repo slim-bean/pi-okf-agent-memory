@@ -176,11 +176,16 @@ test('full ownership provisions a missing bundle and Git without any UI, using e
 });
 
 test('full ownership treats missing author identity as an external prerequisite, never invents it',async()=>{
+  // CI/agent hosts may provision identity through environment rather than Git
+  // config. Remove both sources for this deliberately identity-free fixture.
+  const keys=['GIT_AUTHOR_NAME','GIT_AUTHOR_EMAIL','GIT_COMMITTER_NAME','GIT_COMMITTER_EMAIL','EMAIL'];
+  const saved=Object.fromEntries(keys.map(k=>[k,process.env[k]]));
+  for(const k of keys)delete process.env[k];
   const f=fixture({missing:true});
   try {
     await assert.rejects(f.run('upgrade'),e=>e.code==='memory-external'&&e.detail.external.code==='credentials');
     assert.equal(f.calls,0);assert.equal(spawnSync('git',['-C',f.bundle,'config','--get','user.name']).status,1);
-  }finally{await f.close()}
+  }finally{await f.close();for(const [k,v]of Object.entries(saved)){if(v===undefined)delete process.env[k];else process.env[k]=v}}
 });
 
 test('full recovery investigates source evidence and repairs schema/governance/staleness, then verifies and commits',async()=>{

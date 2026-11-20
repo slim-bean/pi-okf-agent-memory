@@ -45,7 +45,9 @@ test("binary checks share unchanged executable work and reject an edited incompa
     assert.deepEqual(await Promise.all([requireCurrentContractAsync(binary), requireCurrentContractAsync(binary)]), ["v0.7.0", "v0.7.0"]);
     assert.equal(readFileSync(count, "utf8"), "x");
     writeFileSync(binary, script("v0.8.0"));
+    assert.equal(await requireCurrentContractAsync(binary), "v0.8.0");
+    writeFileSync(binary, script("v0.9.0"));
     await assert.rejects(requireCurrentContractAsync(binary), /outside the tested range/);
-    assert.equal(readFileSync(count, "utf8"), "xx");
+    assert.equal(readFileSync(count, "utf8"), "xxx");
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

@@ -3,9 +3,9 @@
 Source/release/build provenance and SHA-256 digests are in `UPSTREAM.json`.
 Review these notices when refreshing the engine or its dependencies.
 
-## OKF Agent Memory v0.7.0 — MIT
+## OKF Agent Memory v0.8.0 — MIT
 
-https://github.com/okf-memory/okf-agent-memory/tree/v0.7.0
+https://github.com/okf-memory/okf-agent-memory/tree/v0.8.0
 
 Copyright (c) 2026 sknr and the OKF Memory Contributors
 
