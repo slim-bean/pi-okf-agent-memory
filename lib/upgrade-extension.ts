@@ -203,6 +203,15 @@ export function registerUpgrades(pi: ExtensionAPI, options: Options) {
 
 	pi.registerCommand("memory-upgrade", {
 		description: "Review pending memory upgrades in order; subcommands: status, cancel, unlock",
+		getArgumentCompletions(prefix) {
+			const items = [
+				{ value: "review", label: "review", description: "Start or resume an ordered upgrade review" },
+				{ value: "status", label: "status", description: "Show the upgrade plan and progress" },
+				{ value: "cancel", label: "cancel", description: "Release the review without rolling back completed steps" },
+				{ value: "unlock", label: "unlock", description: "Recover an interrupted local upgrade lock" },
+			].filter(({ value }) => value.startsWith(prefix.trimStart()));
+			return items.length ? items : null;
+		},
 		handler: async (args, ctx) => {
 			const action = args.trim() || "review";
 			try {

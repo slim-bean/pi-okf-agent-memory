@@ -118,6 +118,11 @@ export function registerSetup(pi: ExtensionAPI, options: Options) {
 	attach();
 	pi.registerCommand("memory-setup", {
 		description: "Create/repair Git-backed memory setup with confirmation; status is read-only",
+		getArgumentCompletions(prefix) {
+			return "status".startsWith(prefix.trimStart())
+				? [{ value: "status", label: "status", description: "Inspect setup without making changes" }]
+				: null;
+		},
 		handler: async (args, context) => {
 			try {
 				if (args.trim() === "status") { report(context, JSON.stringify(refresh(context), null, 2)); return; }

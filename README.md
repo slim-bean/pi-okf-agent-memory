@@ -2,7 +2,7 @@
 
 [pi](https://pi.dev) extension and skills for [OKF Agent Memory](https://github.com/okf-memory/okf-agent-memory): local, Git-native project memory that retains **why** decisions were made without turning session history into a knowledge dump.
 
-Package **0.10.1** bundles **OKF v0.8.0** (previously v0.7.0). The corpus format
+Package **0.11.0** bundles **OKF v0.8.0** (previously v0.7.0). The corpus format
 remains **OKF v0.2**. This adopts upstream concurrent CLI write serialization,
 source metadata preservation and optional bundle scope isolation. Bare `memory_show`
 IDs remain project-local instead of falling back to personal/system concepts;
@@ -39,8 +39,8 @@ pi -e .
 Install this release using its pinned tag:
 
 ```bash
-pi install git:github.com/slim-bean/pi-okf-agent-memory@v0.10.1
-pi install -l git:github.com/slim-bean/pi-okf-agent-memory@v0.10.1  # project-local
+pi install git:github.com/slim-bean/pi-okf-agent-memory@v0.11.0
+pi install -l git:github.com/slim-bean/pi-okf-agent-memory@v0.11.0  # project-local
 ```
 
 Pinned refs do not move automatically. Select the new tag explicitly, then restart pi or `/reload`. The extension checks project upgrade progress when it loads; it does not poll for available package releases.
@@ -71,6 +71,9 @@ Optional environment variables:
   concepts (not necessarily one connected graph). Applies to validation and finalization.
 
 ## Tools and commands
+
+The Pi argument menu shows `status` for `/memory-setup` and
+`review`, `status`, `cancel`, and `unlock` for `/memory-upgrade`.
 
 | Surface | Purpose |
 |---|---|
@@ -122,7 +125,7 @@ pending. Index discoverability remains separate from semantic relationships.
 
 A bundle with pending work shows a startup notice and persistent status:
 
-> pi-okf-agent-memory 0.10.1: 1 bundle upgrade step pending. Run /memory-upgrade to review it in order.
+> pi-okf-agent-memory 0.11.0: 1 bundle upgrade step pending. Run /memory-upgrade to review it in order.
 
 **Startup inspection is read-only:** setup writes require user confirmation or a bound host setup request. No migration, ledger creation, or agent turn follows setup alone. Upgrade checks run on reload too; a short model-facing warning persists while work is pending. Missing Git setup is reported before upgrade review, not discovered only at its final commit.
 
