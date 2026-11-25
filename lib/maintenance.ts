@@ -334,8 +334,10 @@ export function registerMemoryMaintenance(pi: ExtensionAPI, options: { packageVe
           guard(); // observers/awaits may have delivered cancellation or source edits
           return result;
         };
-        // A pending upgrade migrates first: repairing navigation it is about to replace would waste a cycle.
-        const preflight = r.operation === "upgrade" && !status!.finished ? { repairPending: false } : await ensureValid();
+        // A pending upgrade migrates first, so repair works on the new layout and can fix
+        // what the step's verifier would reject (for example a broken link) before it runs.
+        if (r.operation === "upgrade" && status!.pending.length) { guard(); runner.applyPending({ cwd: r.cwd }); }
+        const preflight = await ensureValid();
         if (preflight.repairPending) {
           // Finalize repairs before extraction/upgrade, including a recovered
           // pending commit. Repair success is validation + a real scoped commit.

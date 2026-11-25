@@ -266,6 +266,16 @@ export class UpgradeRunner {
 		return this.status();
 	}
 
+	/** Apply pending deterministic migrations without recording them, so a caller can
+	 * repair what their verifiers would reject (for example a broken link) first. */
+	applyPending(context: UpgradeContext = {}) {
+		this.assertOwnership();
+		for (const step of this.steps.slice(this.readState().completed.length)) {
+			if (!isAutomatic(step)) return;
+			step.apply?.(this.bundle, context);
+		}
+	}
+
 	/** Run pending deterministic steps in order, stopping at the first one that
 	 * needs a model review. No model call, prompt or approval beyond the caller's. */
 	runAutomatic(context: UpgradeContext = {}) {

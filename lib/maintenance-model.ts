@@ -25,8 +25,9 @@ export async function maintenanceModel(options: {
   const inputChars = JSON.stringify(input).length;
   const estimatedInputTokens = Math.ceil(inputChars / 2);
   const overheadTokens = 1000;
-  if (estimatedInputTokens + maxTokens + overheadTokens > model.contextWindow) throw new MemoryMaintenanceIssue("deferred", "memory-context-capacity", modelKey,
-    `Maintenance input exceeds ${modelKey} context (${estimatedInputTokens} estimated input + ${maxTokens} output + ${overheadTokens} overhead tokens > ${model.contextWindow}). Use a larger-context model or full-ownership recovery; evidence was not silently truncated.`,
+  if (estimatedInputTokens + maxTokens + overheadTokens > model.contextWindow) // Static until the model or source changes: "blocked" gets the coordinator's backoff instead of a retry every poll.
+  throw new MemoryMaintenanceIssue("blocked", "memory-context-capacity", modelKey,
+    `Maintenance input exceeds ${modelKey} context (${estimatedInputTokens} estimated input + ${maxTokens} output + ${overheadTokens} overhead tokens > ${model.contextWindow}). Use a larger-context review model; evidence was not silently truncated.`,
     { inputChars, estimatedInputTokens, maxTokens, overheadTokens, contextWindow: model.contextWindow });
   const local = new AbortController();
   const deadline = modelDeadline([signal, local.signal], options.timeoutMs);

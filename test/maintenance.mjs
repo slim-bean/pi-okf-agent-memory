@@ -91,7 +91,7 @@ test('complete-request admission rejects insufficient model context before calli
     f.h.ctx.model.contextWindow=1000;
     await assert.rejects(f.run('review'),e=>{
       assert.equal(e.code,'memory-context-capacity');
-      assert.equal(e.kind,'deferred');
+      assert.equal(e.kind,'blocked'); // static until the model changes: backoff, not a retry every poll
       assert.equal(e.resource,'fake/offline');
       assert.equal(e.detail.contextWindow,1000);
       assert.ok(e.detail.estimatedInputTokens+e.detail.maxTokens+e.detail.overheadTokens>1000);
@@ -249,6 +249,24 @@ test('hand-edited or stale navigation is regenerated and committed without a mod
     assert.match(readFileSync(join(f.bundle,'catalog.md'),'utf8'),/Authoritative description/);
     assert.match(readFileSync(join(f.bundle,'index.md'),'utf8'),/generated_by: pi-okf-agent-memory[\s\S]*\[Nested rationale\]\(decisions\/nested\/one\.md\)/);
     assert.ok(operations.some(e=>e.type==='repair'&&e.detail.files.some(x=>x.file==='index.md')));
+    assert.equal(git(f.bundle,'status','--porcelain'),'');
+  }finally{f.close()}
+});
+
+test('a pending upgrade whose verifier would reject a broken link migrates, repairs the link, then completes',async()=>{
+  const f=fixture();
+  try {
+    seedLinks(f);
+    mkdirSync(join(f.bundle,'legacy'));writeFileSync(join(f.bundle,'legacy/index.md'),'# Legacy\n'); // an OKF-era per-directory index
+    f.response=correction();
+    const first=await f.run('upgrade');
+    assert.equal(first.complete,false);assert.equal(first.detail.repaired,true);assert.equal(f.calls,1);
+    assert.equal((await f.run('status')).upgraded,false);
+    assert.match(readFileSync(join(f.bundle,'one.md'),'utf8'),/\(two\.md\)/);
+    const done=await f.run('upgrade');
+    assert.equal(done.complete,true);assert.equal(f.calls,1,'the upgrade itself needs no model');
+    assert.equal((await f.run('status')).upgraded,true);
+    assert.throws(()=>readFileSync(join(f.bundle,'legacy/index.md')),/ENOENT/);
     assert.equal(git(f.bundle,'status','--porcelain'),'');
   }finally{f.close()}
 });
