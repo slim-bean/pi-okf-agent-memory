@@ -23,7 +23,6 @@ export interface SetupHostResponse {
 }
 interface Options {
 	packageVersion: string;
-	getBinary(): string;
 	busy(): boolean;
 	onReady?(ctx: ExtensionContext): void;
 }
@@ -70,7 +69,7 @@ export function registerSetup(pi: ExtensionAPI, options: Options) {
 			].join("\n\n"));
 			if (!approved) return;
 			if (binding !== session || busy(context)) throw new Error("Session or activity changed during setup approval. Retry /memory-setup.");
-			const status = setupBundle(context.cwd, options.getBinary(), plan);
+			const status = setupBundle(context.cwd, plan);
 			options.onReady?.(context);
 			report(context, `Memory setup complete: ${status.bundle} (Git worktree ${status.repository}). ${full ? "Full-ownership maintenance will review and commit the baseline automatically; setup itself made no commit." : "Run /memory-upgrade to review and commit the baseline; setup did not approve upgrades or make a commit."}`);
 		} finally { if (binding === session) { active = false; refresh(context); } }
@@ -102,7 +101,7 @@ export function registerSetup(pi: ExtensionAPI, options: Options) {
 		active = true;
 		let response: SetupHostResponse;
 		try {
-			const status = setupBundle(ctx.cwd, options.getBinary(), plan);
+			const status = setupBundle(ctx.cwd, plan);
 			response = { protocol: 1, id: r.id, session, packageVersion: options.packageVersion, phase: "completed", terminal: true, status, runtimeId: r.runtimeId };
 		} catch (err) {
 			response = { protocol: 1, id: r.id, session, packageVersion: options.packageVersion, phase: "blocked", terminal: true, code: "setup_failed", message: messageOf(err), status: inspectSetup(ctx.cwd), runtimeId: r.runtimeId };

@@ -35,9 +35,10 @@ Requests on `okf:maintenance:v1` assign `request.result` synchronously:
 ```
 
 Results contain `available`, a policy/package/model `key`, `complete`, and optional
-`detail`. Status also reports canonical `bundle`, `upgraded`, `orphanPolicy`, and
-`repairPolicy:1` (automatic structural repair authority), `ownershipProtocol:1`, and
-selected `ownership`. Full missing-bundle status is read-only `available:true`,
+`detail`. The key no longer contains the package version, so a release that keeps
+review policy does not re-admit every session. Status also reports canonical `bundle`,
+`upgraded`, `repairPolicy:1` (automatic structural repair authority), `ownershipProtocol:1`,
+selected `ownership`, and a constant `orphanPolicy:"advisory"` kept for older coordinators. Full missing-bundle status is read-only `available:true`,
 `setupRequired:true`, `upgraded:false`; the next authorized upgrade provisions it. Updated coordinators
 re-admit old validation-blocked plans when this capability appears, preserving
 counters/checkpoints rather than waiting out obsolete static-blocker backoff.
@@ -73,8 +74,8 @@ Authority precedence is request/workspace settings, `PI_MEMORY_OWNERSHIP`, then
 limited in every environment. Hosts opt into full ownership explicitly through
 these generic settings; deployment/sandbox detection never grants authority.
 These settings are configuration, not authenticated source identity. Full mode means no human
-approval or console answer is expected for memory-owned repairs, even governance,
-held concepts and stale review. Investigate repository/session evidence; qualify
+approval or console answer is expected for memory-owned repairs, including
+human-verified concepts and stale review. Investigate repository/session evidence; qualify
 or archive unsupported claims. Preserve prior verification as historical provenance,
 never claim that agent-corrected content was human-reviewed.
 
@@ -88,8 +89,9 @@ validation/extraction replaces their stale diagnosis. Status/startup do not migr
 anything. Legacy cases/checkpoints, extraction journals and corpus files are retained;
 retirement alone never grants completion or bypasses validation/commit.
 
-OKF semantic types are open, nonempty single-line labels (at most 80 characters),
-including Discovery and Research; CLI example types are not an enum.
+Concept types are open, nonempty single-line labels (at most 80 characters).
+The worker is told the bundle format and that `index.md`/`catalog.md` are generated; the
+host regenerates them before verifying, so a worker never needs to edit navigation.
 Original corpus bytes are checkpointed before writes; read versions and
 source/lock guards protect normal file-tool writes. Interrupted calls are inspected,
 not blindly replayed. Corpus snapshots are content-addressed; individual full
@@ -118,8 +120,8 @@ investigation/qualification work, not an external blocker.
 Host verification, not model prose, decides success. Tool-based reviews can attest
 `reviewed:true, reviewedSourceHash:<current hash>` after inspecting all source branches,
 allowing failed extraction/oversized-corpus recovery without deleting valid memory.
-Upgrade attestations bind the delivered step ID/guide hash and still require runner
-ordering, deterministic checks and final commit proof. Other repair-only successes
+Upgrade steps are deterministic: after a worker repairs what a step's verifier reported,
+the host reruns the step itself and still requires final commit proof. Other repair-only successes
 return `complete:false`; normal pending work resumes automatically. Full policy keys
 include corpus-content fingerprints and a daily health boundary, so validation runs
 again after independent edits/expiry without re-paying committed extraction sections.
@@ -140,16 +142,32 @@ whole-repository reconciliation is not granted for unrelated enclosing project s
 
 ## Execution and limits
 
-- Upgrade uses package-owned ordered guides and UpgradeRunner validation/ledger.
-  One step per opportunity; finalization retries do not repeat completed guides.
-- Ordinary review reads all supplied branches and the complete Markdown corpus
-  (excluding the append-only log). It splits long conversation text without sampling.
-  At most one new section is processed per opportunity; completed section receipts
-  reuse unchanged source sections. Model calls are tool-free and use the existing
-  registry, bounded to ten minutes by default and 8192 output tokens. Hosts can
-  override the per-call deadline with `modelTimeoutMs`; pi-session-maintenance
-  supplies its configurable `modelTimeoutSeconds`. Longer deadlines do not disable
-  foreground/peer cancellation or override shorter provider/server limits.
+- Upgrade runs the package's ordered deterministic steps through UpgradeRunner and
+  commits, with no model call. A pending step that needs model review (none ship today)
+  is reported as `memory-upgrade-review` for an interactive `/memory-upgrade`.
+- Ordinary review reads all supplied branches. It splits long conversation text without
+  sampling and processes at most one new section per opportunity. The reviewer is sent
+  `memory.catalog` (one `id | title | description` line for every concept) and
+  `memory.concepts` (full text of the concepts that best match the section, most
+  relevant first; a concept too large for the remaining budget contributes its head and
+  matching section, marked as an excerpt). The budget is derived from the selected
+  model's context window and capped at 60,000 characters, so corpus growth does not
+  change request size. Model calls are tool-free and use the existing registry, bounded
+  to ten minutes by default and 8192 output tokens. Hosts can override the per-call
+  deadline with `modelTimeoutMs`; pi-session-maintenance supplies its configurable
+  `modelTimeoutSeconds`. Longer deadlines do not disable foreground/peer cancellation.
+- Section journals live under `workDir/<hash(bundle, source path)>` and no longer
+  depend on package version or model. Committed journals written by 0.6–0.11 under the
+  current model are honoured, so adopting a release does not repeat paid extraction.
+- Full ownership consolidates before extracting: the concept with the most
+  `## Session evidence` sections (four or more) is sent alone with a rewrite guide.
+  The returned body is accepted only if it is at least 200 characters, shorter than the
+  original, free of per-session evidence headings and keeps every local link. It is
+  written, validated and committed as `chore(memory): consolidate <id>`, and the
+  opportunity returns `complete:false` with `detail.consolidated`. A rejected rewrite
+  is recorded in `workDir/consolidation/`; after two rejections of the same content the
+  concept is left alone until it changes. Human-verified concepts are never rewritten.
+  Limited ownership never consolidates; `/memory-consolidate` asks the foreground agent.
 - Prompts state the output-token budget. A section whose call stops on `length` or
   its own deadline is not retried unchanged: a `<section>.split.json` marker in the
   private work dir halves only that section (whole entries by size, or one oversized
@@ -159,14 +177,18 @@ whole-repository reconciliation is not granted for unrelated enclosing project s
   JSON chars are not split; they fail with structured `model-output-limit` /
   `model-timeout` issues (`detail.minimumSplit`) for the coordinator's retry limit.
   Caller/foreground cancellation never triggers a split.
-- Before upgrade/review and after applying a plan, failed validation triggers automatic
-  structural repair under the same bundle lock. Index entries/descriptions are restored
-  from CLI concept metadata without a model call. Remaining broken links can use one
-  tool-free model proposal per opportunity, capped at two proposals per unchanged
-  corpus/policy. Only exact broken Markdown body links may be retargeted to existing
-  bundle files; labels, prose, facts and frontmatter stay unchanged. Held/human-verified
-  concepts cannot receive model edits. No removal or invented semantic links.
-- Repairs checkpoint original/replacement bytes and rationale in private
+- Before review and after applying a plan, navigation (`index.md`, `catalog.md`) is
+  regenerated from concept metadata and the usage ledger, which is also when idle
+  concepts leave the session index. This needs no model, checkpoint or approval. If
+  blocking findings remain and all of them are broken links, one tool-free model
+  proposal per opportunity may retarget them, capped at two proposals per unchanged
+  corpus. The model sees only the files with broken links and the catalog. Only exact
+  broken Markdown body links may be retargeted to existing bundle files; labels, prose,
+  facts and frontmatter stay unchanged. Human-verified concepts cannot receive model
+  edits. Findings that need a concept file repaired (unreadable frontmatter, missing
+  title/description, symlink) are `memory-validation` blockers in limited mode and go
+  to the recovery worker in full mode.
+- Link repairs checkpoint original/replacement bytes and rationale in private
   `workDir/repairs/` before writes. Source freshness/corpus agreement is checked before
   application; partial application resumes idempotently. A changed target archives the
   stale checkpoint and defers fresh planning rather than overwriting foreground work.
@@ -176,27 +198,24 @@ whole-repository reconciliation is not granted for unrelated enclosing project s
   addenda. `onEvent` exposes failed/successful `validation` and applied `repair` records.
 - If extraction already used the opportunity's model allowance, link repair emits
   deferred `memory-repair-pending` and runs next idle opportunity. No approval prompt
-  or foreground delegation. Unresolved schema/factual/governance/staleness/policy
-  findings stay `memory-validation` blockers with repair evidence; no dates, identity,
-  provenance, orphan policy or verification claims are fabricated to pass validation.
+  or foreground delegation. Unresolved concept-file findings stay `memory-validation`
+  blockers with repair evidence; no dates, identity, provenance or verification claims
+  are fabricated to pass validation.
 - Limited structured extraction plans cite source entries and permit only create or attributed body
-  addenda to concepts. They cannot delete, overwrite frontmatter, grant governance,
+  addenda to concepts. They cannot delete, overwrite frontmatter,
   mark human verification, or execute shell/browser actions. Corrections qualify
-  earlier claims rather than erase provenance. Held/human-verified concepts are
+  earlier claims rather than erase provenance. Human-verified concepts are
   not automatically modified in limited mode. Full ownership grants investigation
   and warranted corrections, preserving historical provenance; it does not fabricate verification.
-- Corpus loading has no fixed character cap. Before each model call, the complete
-  serialized request (prompt, source, corpus and tools) is estimated at one token
-  per two characters, plus the output allowance and 1,000 overhead tokens, against
-  the selected model’s context window. This is a heuristic, not provider tokenization.
-  Oversized input reports `memory-context-capacity` with sizing details; it never
-  silently drops evidence. Choose a larger-context model or use explicitly authorized
-  full-ownership recovery, which can inspect files through tools. Validation and
-  checkpoint freshness reads are not subject to a model-input limit.
-- Concept extraction uses the bundled OKF CLI and maintains root/immediate indexes.
-  Structural repair uses checkpointed exact Markdown writes to preserve all metadata. Validation
-  must have zero blocking findings; isolation is advisory unless OKF_ORPHAN_POLICY
-  is strict. No arbitrary semantic links are generated to satisfy a graph heuristic. Every completed section is automatically committed,
+- Before each model call, the complete serialized request (prompt, source, supplied
+  memory and tools) is estimated at one token per two characters, plus the output
+  allowance and 1,000 overhead tokens, against the selected model's context window.
+  This is a heuristic, not provider tokenization. Because supplied memory is sized to
+  the model, only a model too small for one source section plus the prompt reports
+  `memory-context-capacity`; nothing is truncated silently to avoid it.
+- Concepts are written through the package's native store, which stamps frontmatter,
+  appends the log and regenerates navigation. Validation must have zero blocking
+  findings; concepts need no links to each other. Every completed section is automatically committed,
   including already-present agent-owned changes within the bundle, while preserving
   unrelated outer-repository staging. Hooks/signing and configured identity are honored.
 - Plans are checkpointed before writes; interrupted application detects already
@@ -213,7 +232,7 @@ The adapter shares the existing bundle upgrade lock. Dead local locks may be
 recovered only after local PID-death checks and exact lock comparison; live/foreign
 owners are never displaced by age. Foreground input aborts nested model calls.
 Cancellation keeps ownership until work stops; it does not roll back completed
-corpus edits or commits. Synchronous CLI/Git operations can occupy the event loop
+corpus edits or commits. Synchronous Git operations can occupy the event loop
 until their bounded timeout; interruption is cooperative, not instantaneous.
 
 This is a trusted in-process protocol, not a model-callable surface or a sandbox.

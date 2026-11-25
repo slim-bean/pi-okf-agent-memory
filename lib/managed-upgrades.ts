@@ -11,8 +11,6 @@ export const UPGRADE_HOST = {
 
 export interface UpgradeSnapshot {
 	packageVersion: string;
-	binary: string | null;
-	version: string | null;
 	notice: string;
 	status: ReturnType<UpgradeRunner["status"]> | null;
 	lock: ReturnType<UpgradeRunner["lockInfo"]>;

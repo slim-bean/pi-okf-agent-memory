@@ -1,31 +1,73 @@
 import { randomUUID } from "node:crypto";
-import { closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, readdirSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { hostname } from "node:os";
 import { join } from "node:path";
-import { requireCurrentContract, validateBundle } from "./okf.js";
+import { homedir } from "node:os";
+import { validateBundle } from "./memory.js";
+import { loadConcepts, rewriteLinks } from "./store.js";
+import { refreshView, removeLegacyIndexes } from "./view.js";
+import { backfillUsage } from "./usage.js";
 import { bundleCommitStatus, commitBundle } from "./git.js";
 import { bundleCommitStatusAsync } from "./git-status-async.js";
 
+export interface UpgradeContext { /** Workspace the bundle serves; locates its pi session logs. */ cwd?: string; sessionDirs?: string[] }
 export interface UpgradeStep {
 	id: string;
 	title: string;
-	instructions: string;
-	verify: (binary: string, bundle: string) => void;
+	/** Guide file for a model-reviewed step. Automatic steps need none. */
+	instructions?: string;
+	/** Deterministic migration. Must be idempotent: it may run again after an interrupted attempt. */
+	apply?: (bundle: string, context: UpgradeContext) => void;
+	/** Read-only and repeatable; rechecked before and after the final commit. */
+	verify: (bundle: string) => void;
+}
+export const isAutomatic = (step: UpgradeStep) => !step.instructions;
+
+/** pi stores sessions per working directory; used only to seed usage history. */
+export function sessionDirsFor(cwd: string | undefined): string[] {
+	if (!cwd) return [];
+	const root = join(process.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent"), "sessions");
+	return [join(root, `--${cwd.replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`)];
 }
 
-/** Append only. IDs and their meaning are stable across package releases.
- * Keep old instructions/verifiers runnable with the currently shipped binary. */
+/** Convert an OKF-CLI-era bundle to the native layout: one generated index plus a
+ * catalog instead of per-directory indexes, and a usage ledger seeded from history. */
+export function migrateToNativeLayout(bundle: string, context: UpgradeContext = {}) {
+	const removed = removeLegacyIndexes(bundle);
+	if (removed.length) rewriteLinks(bundle, Object.fromEntries(removed.map(file => [file, "catalog.md"])));
+	const { concepts } = loadConcepts(bundle);
+	backfillUsage(bundle, [...(context.sessionDirs ?? []), ...sessionDirsFor(context.cwd)], new Map(concepts.map(c => [c.id, c.updated])));
+	refreshView(bundle, { rebalance: true, concepts });
+}
+
+/** Append only. IDs and their meaning are stable across package releases. */
 export const UPGRADE_STEPS: readonly UpgradeStep[] = [{
 	id: "001-validation-contract",
-	title: "Review the OKF 0.4 validation and governance contract",
-	instructions: "001-validation-contract.md",
-	verify(binary, bundle) {
-		requireCurrentContract(binary);
-		const result = validateBundle(binary, bundle);
-		if (!result.ok) throw new Error(`Upgrade verification failed; progress was not advanced. Resolve findings with user approval, then retry.\n${JSON.stringify(result, null, 2)}`);
+	// The OKF CLI contract this step reviewed no longer exists. The ID stays so
+	// ledgers written by older packages remain in order; native checks live in 002.
+	title: "Baseline (historical OKF CLI contract; nothing to review)",
+	verify() {},
+}, {
+	id: "002-native-store",
+	title: "Adopt the native store: generated index and catalog, usage ledger",
+	apply: migrateToNativeLayout,
+	verify(bundle) {
+		const result = validateBundle(bundle);
+		if (!result.ok) throw new Error(`Upgrade verification failed; progress was not advanced.\n${JSON.stringify(result.findings, null, 2)}`);
+		const stray = (function find(dir: string): string | null {
+			for (const item of readdirSync(dir, { withFileTypes: true })) {
+				if (item.name.startsWith(".") || !item.isDirectory() || item.isSymbolicLink()) continue;
+				if (existsSync(join(dir, item.name, "index.md"))) return join(dir, item.name, "index.md");
+				const nested = find(join(dir, item.name)); if (nested) return nested;
+			}
+			return null;
+		})(bundle);
+		if (stray) throw new Error(`Per-directory index remains at ${stray}; catalog.md replaces it.`);
 	},
 }];
 
+/** Ledger field kept for compatibility with records written while an OKF binary was bundled. */
+const STORE = "native";
 interface Completion {
 	id: string;
 	at: string;
@@ -181,7 +223,7 @@ export class UpgradeRunner {
 			// Keep the portable completion ledger, not process-local locks, in Git.
 			const ignore = join(this.stateDir, ".gitignore");
 			const previous = existsSync(ignore) ? readFileSync(ignore, "utf8") : "";
-			const missing = ["lock.json", ".state-*.tmp", "finalize-pending"].filter(line => !previous.split(/\r?\n/).includes(line));
+			const missing = ["lock.json", ".state-*.tmp", "finalize-pending", "usage.jsonl", "usage.jsonl.*.tmp"].filter(line => !previous.split(/\r?\n/).includes(line));
 			if (missing.length) writeFileSync(ignore, previous + (previous && !previous.endsWith("\n") ? "\n" : "") + missing.join("\n") + "\n");
 		} catch (err) { this.release(); throw err; }
 	}
@@ -199,6 +241,7 @@ export class UpgradeRunner {
 		const state = this.readState();
 		const step = this.steps[state.completed.length];
 		if (!step) return null;
+		if (!step.instructions) throw new Error(`${step.id} is an automatic step; it has no review instructions.`);
 		const skillRoot = join(this.skillsDir, "okf-memory-upgrade");
 		const skill = readFileSync(join(skillRoot, "SKILL.md"), "utf8");
 		const guide = readFileSync(join(skillRoot, "steps", step.instructions), "utf8");
@@ -208,20 +251,31 @@ export class UpgradeRunner {
 			`Bundle: ${JSON.stringify(this.bundle)}\nInstruction base directory: ${JSON.stringify(skillRoot)}\n\n${skill}\n\n${guide}`;
 	}
 
-	complete(id: string, binary: string) {
+	complete(id: string) {
 		this.assertOwnership();
 		const state = this.readState();
 		const step = this.steps[state.completed.length];
-		if (!step || id !== step.id || this.delivered !== id) {
+		if (!step || id !== step.id || (step.instructions && this.delivered !== id)) {
 			throw new Error("Cannot skip upgrade steps or complete an undelivered step. Request the next step and finish it in order.");
 		}
-		const version = requireCurrentContract(binary);
-		step.verify(binary, this.bundle);
+		step.verify(this.bundle);
 		this.assertOwnership();
-		state.completed.push({ id, at: new Date().toISOString(), packageVersion: this.packageVersion, okfVersion: version });
+		state.completed.push({ id, at: new Date().toISOString(), packageVersion: this.packageVersion, okfVersion: STORE });
 		this.writeState(state);
 		this.delivered = undefined;
 		return this.status();
+	}
+
+	/** Run pending deterministic steps in order, stopping at the first one that
+	 * needs a model review. No model call, prompt or approval beyond the caller's. */
+	runAutomatic(context: UpgradeContext = {}) {
+		this.assertOwnership();
+		for (;;) {
+			const step = this.steps[this.readState().completed.length];
+			if (!step || !isAutomatic(step)) return this.status();
+			step.apply?.(this.bundle, context);
+			this.complete(step.id);
+		}
 	}
 
 	private writeState(state: State) {
@@ -236,23 +290,22 @@ export class UpgradeRunner {
 
 	/** Final success means validated AND committed. Retrying a failed commit
 	 * does not rewrite step timestamps or require the agent to repeat the review. */
-	finalize(binary: string) {
+	finalize() {
 		this.assertOwnership();
 		const state = this.readState();
 		if (!state.completed.length || state.completed.length !== this.steps.length) throw new Error("Complete every upgrade step before finalizing its commit.");
 		writeFileSync(this.finalizePath, "Final commit pending; resume with /memory-upgrade.\n", { mode: 0o600 });
 		try {
-			const version = requireCurrentContract(binary);
-			for (const step of this.steps) step.verify(binary, this.bundle);
+			for (const step of this.steps) step.verify(this.bundle);
 			this.assertOwnership();
 			if ((state.application?.packageVersion ?? state.completed.at(-1)?.packageVersion) !== this.packageVersion) {
-				state.application = { packageVersion: this.packageVersion, okfVersion: version };
+				state.application = { packageVersion: this.packageVersion, okfVersion: STORE };
 				this.writeState(state);
 			}
 			const commit = commitBundle(this.bundle, state.completed.at(-1)!.id);
 			// Hooks can change content as well as reject a commit. A clean Git
 			// worktree alone is not proof that the resulting bundle still passes.
-			for (const step of this.steps) step.verify(binary, this.bundle);
+			for (const step of this.steps) step.verify(this.bundle);
 			this.assertOwnership();
 			unlinkSync(this.finalizePath);
 			return { ...this.status(), commit };

@@ -1,14 +1,12 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { binaryVersion, requireCurrentContract, supportsCurrentContract } from "./okf.js";
-import { UpgradeRunner, type UpgradeStep } from "./upgrades.js";
+import { UpgradeRunner, isAutomatic, type UpgradeStep } from "./upgrades.js";
 import { configuredOwnership } from "./ownership.js";
 import { registerManagedUpgrades, type ManagedHooks, type UpgradeSnapshot } from "./managed-upgrades.js";
 
 interface Options {
 	skillsDir: string;
 	packageVersion: string;
-	getBinary: () => string;
 	getBundle: (cwd: string) => string | null;
 	steps?: readonly UpgradeStep[];
 	hostTiming?: ManagedHooks["timing"];
@@ -44,21 +42,18 @@ export function registerUpgrades(pi: ExtensionAPI, options: Options) {
 
 	function inspect(cwd: string) {
 		const runner = runnerFor(cwd);
-		if (!runner) return { runner, status: null, notice: "", binary: null, version: null };
+		if (!runner) return { runner, status: null, notice: "" };
 		const status = runner.status();
-		const binary = options.getBinary();
-		const version = binaryVersion(binary);
-		const compatibility = supportsCurrentContract(version) ? "" : `OKF ${version} is outside the tested range >=0.7.0 <0.9.0. Correct OKF_BIN or use the bundled binary. `;
-		const notice = compatibility + (status.pending.length
+		const notice = (status.pending.length
 			? `pi-okf-agent-memory ${options.packageVersion}: ${status.pending.length} bundle upgrade step(s) pending${status.baseline === "unassessed" ? " (baseline not yet assessed)" : ""}. Run /memory-upgrade to review them in order.${status.locked ? " A review currently holds the bundle lock." : ""}`
 			: status.versionPending
 				? `pi-okf-agent-memory ${options.packageVersion} has not been adopted by this bundle (last ${status.appliedPackageVersion ?? "unassessed"}). Run /memory-upgrade to verify and commit the installed version.`
 				: status.finalization.pending
 				? `pi-okf-agent-memory: upgrade checks are recorded, but the required final commit is pending. Run /memory-upgrade to finalize.${status.finalization.error ? ` ${status.finalization.error}` : ""}`
-				: compatibility ? "Run /memory-upgrade status." : "");
+				: "");
 		let setupNotice = "";
 		try { options.requireSetup?.(cwd); } catch (err) { setupNotice = err instanceof Error ? err.message : String(err); }
-		return { runner, status, notice: setupNotice || notice, binary, version };
+		return { runner, status, notice: setupNotice || notice };
 	}
 
 	function snapshot(ctx: ExtensionContext): UpgradeSnapshot {
@@ -102,14 +97,13 @@ export function registerUpgrades(pi: ExtensionAPI, options: Options) {
 			? `HOST-MANAGED REVIEW (request ${managed?.requestId}): the host approved all pending upgrades for this installed package, including necessary upgrade-related repairs within this agent-owned bundle and the required local commit. No interactive user is waiting. For repair-plan approval clauses below, document the plan/checkpoint in the transcript and proceed within this scope; do not wait for a console answer. Do not change external project files, grant new governance authority, fabricate verification or review dates, push, sync, or replace instructions. If a step needs a policy decision or a fact you cannot establish, call memory_upgrade(action="block", reason="...") and report the blocker instead of inventing an answer.\n`
 			: "The user approved an upgrade review AND the required final local commit of the agent-owned knowledge bundle, not arbitrary corpus rewrites or a push.\n";
 		return consent + `Follow the package instructions below.\n` +
-			`Resolved OKF executable: ${JSON.stringify(options.getBinary())} (use this exact path, shell-quoted; do not assume okf is on PATH).\n` +
 			`When the current step is satisfied, call memory_upgrade(action="complete", step="${step}"). Do not batch multiple step completions in one model turn. ` +
 			`The extension verifies it before advancing. Call memory_upgrade(action="next") to recover the current instructions after compaction.\n\n${next}`;
 	}
 
 	function finish(ctx: ExtensionContext, runner: UpgradeRunner) {
 		try {
-			const status = runner.finalize(options.getBinary());
+			const status = runner.finalize();
 			const hosted = activeMode === "host";
 			if (hosted) managed!.complete(status); // retain the lease until the agent settles
 			else release();
@@ -126,14 +120,15 @@ export function registerUpgrades(pi: ExtensionAPI, options: Options) {
 		if (active) throw new Error("An upgrade review already owns this session.");
 		if (options.setupBusy?.()) throw new Error("Memory setup is awaiting approval/running; finish it before upgrading.");
 		options.requireSetup?.(ctx.cwd);
-		requireCurrentContract(options.getBinary());
 		const runner = runnerFor(ctx.cwd);
 		if (!runner) throw new Error("No knowledge bundle is resolved.");
 		let status = runner.status();
 		if (!status.finished) {
 			runner.acquire(runtimeId);
 			active = runner; activeMode = mode; fullAuthority = configuredOwnership(ctx.cwd) === "full";
-			status = runner.status();
+			// Deterministic steps need no model turn: migrate, verify and record them now.
+			try { status = runner.runAutomatic({ cwd: ctx.cwd }); }
+			catch (err) { if (mode !== "host") release(); throw err; }
 		}
 		if (status.finished) {
 			release();
@@ -169,8 +164,8 @@ export function registerUpgrades(pi: ExtensionAPI, options: Options) {
 		}),
 		async execute(_id, params, _signal, _onUpdate, ctx) {
 			if (params.action === "status") {
-				const { status, binary, version, notice } = inspect(ctx.cwd);
-				const data = { packageVersion: options.packageVersion, binary, version, notice, status };
+				const { status, notice } = inspect(ctx.cwd);
+				const data = { packageVersion: options.packageVersion, notice, status };
 				return result(JSON.stringify(data, null, 2), data);
 			}
 			const runner = requireActive(ctx);
@@ -190,7 +185,7 @@ export function registerUpgrades(pi: ExtensionAPI, options: Options) {
 			if (delivered?.step === params.step && modelTurn <= delivered.turn) {
 				throw new Error("Read the current step instructions in a subsequent model turn before completing it. Do not batch upgrade completions.");
 			}
-			const status = runner.complete(params.step, options.getBinary());
+			const status = runner.complete(params.step);
 			if (status.pending.length) {
 				if (activeMode === "host") managed!.progress();
 				if (activeMode === "host" && managed?.stopping) return result("Managed upgrade is stopping. Do not proceed to another step.");
@@ -235,7 +230,7 @@ export function registerUpgrades(pi: ExtensionAPI, options: Options) {
 					if (!request.result) throw new Error("Full ownership uses the autonomous maintenance coordinator. Load pi-session-maintenance or use the trusted okf:maintenance:v1 host adapter; no interactive approval is requested.");
 					const status = await request.result; report(ctx, status.admission ?? "Autonomous memory maintenance requested; inspect /maintenance status."); return;
 				}
-				// Recovery must work even when the binary or ledger is broken.
+				// Recovery must work even when the ledger is broken.
 				const runner = runnerFor(ctx.cwd);
 				if (!runner) throw new Error("No OKF bundle found. Run /memory-setup or request explicit host setup first.");
 				if (action === "unlock") {
@@ -250,15 +245,14 @@ export function registerUpgrades(pi: ExtensionAPI, options: Options) {
 					refresh(ctx);
 					return;
 				}
-				const { status, version, notice } = inspect(ctx.cwd);
+				const { status, notice } = inspect(ctx.cwd);
 				if (!status) throw new Error("Knowledge bundle disappeared during inspection; retry.");
 				if (action === "status") {
-					pi.sendMessage({ customType: "okf-upgrade", content: JSON.stringify({ version, notice, ...status }, null, 2), display: true }, { deliverAs: "nextTurn" });
+					pi.sendMessage({ customType: "okf-upgrade", content: JSON.stringify({ notice, ...status }, null, 2), display: true }, { deliverAs: "nextTurn" });
 					return;
 				}
 				if (options.setupBusy?.()) throw new Error("Memory setup is awaiting approval/running; finish it before upgrading.");
 				options.requireSetup?.(ctx.cwd);
-				if (!version || !supportsCurrentContract(version)) throw new Error(notice);
 				if (managed?.requestId) { report(ctx, `Managed request ${managed.requestId} is queued/running. Use /memory-upgrade status or cancel; do not start a second review.`); return; }
 				if (status?.finished) {
 					if (active?.bundle === runner.bundle) release();
@@ -275,7 +269,8 @@ export function registerUpgrades(pi: ExtensionAPI, options: Options) {
 					return;
 				}
 				if (status.locked) throw new Error("Another review holds the bundle lock. Finish/cancel it there; after a crash use /memory-upgrade unlock.");
-				const plan = status.pending.map(s => `${s.id}: ${s.title}`).join("\n") || "Step checks are already recorded. Re-verify and make the required final commit.";
+				const automatic = status.pending.length > 0 && runner.steps.slice(status.completed.length).every(isAutomatic);
+				const plan = status.pending.map(s => `${s.id}: ${s.title}`).join("\n") + (automatic ? "\n\nThese steps are deterministic: no model turn is needed." : "") || "Step checks are already recorded. Re-verify and make the required final commit.";
 				const generation = approvalGeneration;
 				const approved = await confirm(ctx, "Review memory upgrades?", `${plan}\n\nBundle: ${runner.bundle}\nApprove review and the REQUIRED final local Git commit? The commit includes all non-ignored agent-owned bundle changes, including existing knowledge edits and upgrade records, but not unrelated files outside this bundle. No push, identity changes, or hook bypass. Corpus repairs or policy changes still require a separately approved plan. Success requires validation AND the commit.`);
 				if (!approved) return;

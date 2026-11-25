@@ -1,9 +1,9 @@
 {
   "name": "pi-okf-agent-memory",
-  "version": "0.11.0",
-  "description": "Git-native project memory for pi: text/path search, strict validation, session context, and ordered agent-assisted upgrades.",
+  "version": "0.12.0",
+  "description": "Git-native project memory for pi: Markdown concepts, ranked search, a usage-ranked session index, and unattended maintenance. No external binary.",
   "scripts": {
-    "test": "node --test test/smoke.mjs test/managed.mjs test/setup.mjs test/maintenance.mjs test/autonomous.mjs test/validation.mjs test/diagnostics.mjs test/performance.mjs test/upstream.mjs",
+    "test": "node --test test/store.mjs test/smoke.mjs test/managed.mjs test/setup.mjs test/maintenance.mjs test/autonomous.mjs test/diagnostics.mjs test/performance.mjs",
     "test:rpc": "node test/rpc.mjs"
   },
   "license": "MIT",
@@ -12,6 +12,7 @@
     "pi-package",
     "memory",
     "okf",
+    "markdown",
     "knowledge-base",
     "agent-memory",
     "persistent-memory"

@@ -1,29 +1,16 @@
-# 001 — OKF 0.4 validation and governance contract
+# 001 — Baseline contract (historical)
 
-## Applicability and baseline
+This step ID is retained so ledgers written by earlier packages stay in order. The
+OKF CLI contract it once reviewed no longer exists: memory is stored natively and the
+shipped upgrade steps are deterministic migrations that need no model review.
 
-This is the first tracked upgrade in pi-okf-agent-memory 0.2.0. It applies to both older installations without a ledger and new bundles. Missing state means **unassessed**, not an old format or permission to rewrite anything. An empty, conformant bundle can pass without adding concepts.
+If a host or test configures this guide as a reviewed step, the review is:
 
-The bundled engine is OKF v0.8.0, still using the OKF **v0.2 corpus format**. There is no required format conversion or bulk metadata migration. Currently tested binaries are stable releases >=0.7.0 and <0.9.0. Correct an unsupported `OKF_BIN` with the user's help; do not download or install another binary autonomously.
-
-## Review
-
-1. Call `memory_validate`. Review every finding, including warnings. The extension now requires **zero errors, gate findings, and warnings**; upstream's `--strict` exit status alone is insufficient. Validation failures retain their JSON diagnostics. Under the current wrapper policy,
-   isolated concepts are advisory by default, not blocking warnings: independent,
-   properly indexed topics need not be related. `OKF_ORPHAN_POLICY=strict` opts into
-   requiring semantic links. Schema, governance/provenance, index/drift, broken-link
-   and stale-data findings remain blocking. Inspect both raw strict and effective results.
-2. Inspect any flagged parent-index omissions, description mismatches, broken links, expired facts, and code-reference drift. CLI create/update maintains the immediate parent index, not necessarily root navigation. Check that the root index is still useful; do not infer corpus emptiness from its bullet formatting.
-3. Explain the new semantics: `convention/` concepts implicitly have `constraint` authority; other concepts default to `context`. Explicit `hold` means request human signoff before editing governed code. These are agent workflow rules, not an OS-level sandbox. Do not silently relabel existing concepts.
-4. Optional adoption is **not** a prerequisite: `memory_search(for_path="src/example.ts")` can discover `code_refs`; no need to add bindings to every concept. The 0.7 create/update CLI lacks dedicated governance/code_refs flags, so proposed frontmatter edits must be reviewed, preserve provenance, and be validated afterward.
-5. Keep this integration's why-only write budget. Do not run upstream bootstrap over user instructions, enforce AAG, enable Hub sync, or replace this package's skill with upstream's MCP-oriented skill. Those are separate choices.
-
-## Completion and rollback
-
-- If diagnostics require changes, obtain approval for the repair plan and checkpoint first. Do not manufacture links/rationale merely to silence an isolation advisory. Add relationships only when supported by genuine rationale; advisory isolation alone needs no repair plan.
-- Re-run `memory_validate` until `ok` is true, or stop and report blockers. No automatic downgrade or rollback is needed when nothing changed.
-- When reviewed and clean, call `memory_upgrade(action="complete", step="001-validation-contract")`. The runner independently verifies the binary and current zero-blocking-findings contract, records the step, and makes the required local Git commit of the agent-owned bundle and upgrade records. Even an empty bundle needs this commit.
-- Do not claim the workflow finished until the runner returns the commit hash. If Git setup, identity, signing, hooks, or validation blocks finalization, report it and retry `memory_upgrade(action="finalize")` after resolving it. Recorded steps need not be replayed; there is no automatic push.
-- If a repair must be rolled back, restore only its approved changes from the checkpoint; preserve unrelated edits. Do not delete the ledger to fake a downgrade. An older package may not understand newer completion IDs; use a compatible package to inspect them.
-
-The tool can verify structural checks, not whether a policy decision is correct or the agent understood prose. Surface those decisions honestly for human review.
+1. Call `memory_validate`. Every concept must have readable frontmatter with a title
+   and description, and every relative Markdown link must resolve. `index.md` and
+   `catalog.md` are generated; never hand-edit them.
+2. Repair only what a finding names. Do not invent links, facts, dates or human
+   verification to pass validation.
+3. When `ok` is true, call
+   `memory_upgrade(action="complete", step="001-validation-contract")`. The runner
+   verifies independently and makes the required local Git commit. No push is made.

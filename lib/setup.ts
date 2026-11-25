@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmdirSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { git, gitEnv } from "./git.js";
-import { requireCurrentContract, resolveKnowledgeDir, runOkf, validateBundle } from "./okf.js";
+import { initBundle, resolveKnowledgeDir, validateBundle } from "./memory.js";
 
 export interface SetupStatus {
 	bundle: string;
@@ -92,7 +92,7 @@ export function requireSetup(cwd: string, ownedUpgradeToken?: string): SetupStat
 
 /** Explicit caller consent only. No commits, identity/config edits, remotes,
  * pushes, adoption receipts, or content changes to an existing bundle. */
-export function setupBundle(cwd: string, binary: string, approved: SetupStatus, ownedUpgradeToken?: string): SetupStatus {
+export function setupBundle(cwd: string, approved: SetupStatus, ownedUpgradeToken?: string): SetupStatus {
 	const check = () => {
 		const current = inspectSetup(cwd, ownedUpgradeToken);
 		if (current.bundle !== approved.bundle || current.planId !== approved.planId) throw new Error("Setup plan changed; inspect again and obtain fresh approval.");
@@ -101,7 +101,6 @@ export function setupBundle(cwd: string, binary: string, approved: SetupStatus, 
 	};
 	const plan = check();
 	if (plan.phase === "ready") return plan;
-	requireCurrentContract(binary);
 	// Sibling lock works before the bundle exists and doesn't enter Git. A crash
 	// leaves it for explicit operator recovery, never automatic lock stealing.
 	mkdirSync(dirname(plan.bundle), { recursive: true });
@@ -111,8 +110,8 @@ export function setupBundle(cwd: string, binary: string, approved: SetupStatus, 
 	try {
 		check();
 		if (plan.createBundle) {
-			runOkf(binary, ["init", plan.bundle]);
-			if (!validateBundle(binary, plan.bundle).ok) throw new Error("New bundle validation failed; inspect its files before retrying. No rollback was performed.");
+			initBundle(plan.bundle);
+			if (!validateBundle(plan.bundle).ok) throw new Error("New bundle validation failed; inspect its files before retrying. No rollback was performed.");
 		}
 		// Recheck Git after creating the files, refusing broken/replaced metadata.
 		const root = repository(plan.bundle);

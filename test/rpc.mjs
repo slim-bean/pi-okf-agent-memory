@@ -1,6 +1,6 @@
 // Real pi startup/command/confirmation smoke test. Isolated settings, offline,
-// no credentials/model requests: decline interactive review, then finalize an
-// already-reviewed fixture through the real in-process host protocol.
+// no credentials/model requests: decline the interactive upgrade, then run the
+// deterministic upgrade and its commit through the real in-process host protocol.
 import assert from 'node:assert/strict';
 import { spawn, execFileSync } from 'node:child_process';
 import { mkdtempSync, existsSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
@@ -11,9 +11,8 @@ import { jiti, piPackageDir } from './loader.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const work = mkdtempSync(join(tmpdir(), 'pi-okf-rpc-'));
-const { UpgradeRunner, UPGRADE_STEPS } = await jiti.import(join(root, 'lib/upgrades.ts'));
+const { UPGRADE_STEPS } = await jiti.import(join(root, 'lib/upgrades.ts'));
 const bundle = join(work, 'knowledge');
-const binary = join(root, 'bin', `okf-${process.platform}-${process.arch === 'x64' ? 'amd64' : process.arch}`);
 const bridge = join(work, 'host-bridge.ts');
 writeFileSync(bridge, `export default function(pi) {
   let ctx;
@@ -88,7 +87,7 @@ try {
   assert.equal((await waitFor(r => r.type === 'response' && r.id === 'diagnostics')).success, true);
   const diagnostics = await waitFor(r => r.method === 'notify' && r.message.includes('Loaded extension:'));
   assert.ok(diagnostics.message.includes(join(root, 'index.ts')));
-  assert.ok(diagnostics.message.includes(`Selected binary: ${binary}`));
+  assert.ok(diagnostics.message.includes('no external binary'));
   assert.ok(diagnostics.message.includes(join(work, '.pi', 'settings.json')));
   assert.ok(diagnostics.message.includes(join(work, 'agent', 'settings.json')));
   const notice = await waitFor(r => r.type === 'extension_ui_request' && r.method === 'notify' && r.message.includes('/memory-setup'));
@@ -112,17 +111,15 @@ try {
   assert.equal((await waitFor(r => r.type === 'response' && r.id === 'status')).success, true);
   send({ id: 'review', type: 'prompt', message: '/memory-upgrade' });
   const dialog = await waitFor(r => r.type === 'extension_ui_request' && r.method === 'confirm' && r.id !== setupDialog.id);
-  assert.match(dialog.message, /001-validation-contract/);
+  assert.match(dialog.message, /002-native-store/);
+  assert.match(dialog.message, /no model turn is needed/);
   send({ type: 'extension_ui_response', id: dialog.id, confirmed: false });
   assert.equal((await waitFor(r => r.type === 'response' && r.id === 'review')).success, true);
   assert.equal(existsSync(join(bundle, '.pi-okf-memory')), false);
-  // Seed only test-owned review progress. No paid model is needed to exercise
-  // real host consent, idle scheduling, final commit and terminal receipts.
+  // Shipped steps are deterministic: host consent, idle scheduling, migration,
+  // final commit and terminal receipts all run without a model.
   const git = (...args) => execFileSync('git', ['-C', bundle, ...args], { encoding: 'utf8', env: { ...process.env, HOME: work, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' } });
   git('config', 'user.name', 'RPC Tests'); git('config', 'user.email', 'rpc-tests@example.invalid'); git('config', 'commit.gpgSign', 'false');
-  const version = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version;
-  const runner = new UpgradeRunner(bundle, join(root, 'skills'), version);
-  runner.acquire(); runner.nextInstructions(); runner.complete(UPGRADE_STEPS[0].id, binary); runner.release();
   send({ id: 'host', type: 'prompt', message: '/test-host-upgrade' });
   assert.equal((await waitFor(r => r.type === 'response' && r.id === 'host')).success, true);
   const receipt = await waitFor(r => r.type === 'extension_ui_request' && r.method === 'notify' && r.message.startsWith('HOST_RESULT:'));
@@ -130,6 +127,8 @@ try {
   assert.equal(completed.phase, 'completed', JSON.stringify(completed));
   assert.equal(completed.maintenance.active, false);
   assert.equal(git('rev-parse', 'HEAD').trim(), completed.result.commit);
+  assert.deepEqual(JSON.parse(readFileSync(join(bundle, '.pi-okf-memory/state.json'), 'utf8')).completed.map(c => c.id), UPGRADE_STEPS.map(s => s.id));
+  assert.equal(git('status', '--porcelain'), '');
   assert.equal(records.filter(r => r.type === 'extension_ui_request' && r.method === 'confirm').length, 2);
   child.stdin.end();
   const outcome = await Promise.race([exit, new Promise((_, reject) => {
@@ -138,7 +137,7 @@ try {
   assert.equal(outcome.code, 0, stderr);
   assert.equal(records.some(r => r.type === 'agent_start'), false, 'must not start an agent turn');
   assert.doesNotMatch(stderr, /Failed to load extension|Error loading extension/);
-  console.log('PASS real pi RPC: read-only startup, setup/upgrade declines, unattended setup + finalization receipt, no model turn');
+  console.log('PASS real pi RPC: read-only startup, setup/upgrade declines, unattended setup + deterministic upgrade receipt, no model turn');
 } finally {
   if (!exited) { child.kill('SIGTERM'); await exit; }
   rmSync(work, { recursive: true, force: true });

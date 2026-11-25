@@ -8,16 +8,16 @@ import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { jiti } from './loader.mjs';
-import { createHarness } from './support.mjs';
+import { createHarness, makeCli } from './support.mjs';
 const root=dirname(dirname(fileURLToPath(import.meta.url)));
-const {resolveOkfBin,default:extension}=await jiti.import(join(root,'index.ts'));
+const {default:extension}=await jiti.import(join(root,'index.ts'));
+const memory=await jiti.import(join(root,'lib/memory.ts'));
 const {registerMemoryMaintenance}=await jiti.import(join(root,'lib/maintenance.ts'));
-const {validateBundle}=await jiti.import(join(root,'lib/okf.ts'));
+const {validateBundle}=memory;
 const {configuredOwnership}=await jiti.import(join(root,'lib/ownership.ts'));
-const binary=resolveOkfBin();
 process.env.GIT_CONFIG_GLOBAL='/dev/null';process.env.GIT_CONFIG_NOSYSTEM='1';
 const hash=v=>createHash('sha256').update(JSON.stringify(v)).digest('hex');
-const cli=(...args)=>execFileSync(binary,args,{encoding:'utf8'});
+const cli=makeCli(memory);
 const git=(dir,...args)=>execFileSync('git',['-C',dir,...args],{encoding:'utf8'});
 const tool=(name,args,id)=>({stopReason:'toolUse',content:[{type:'toolCall',name,arguments:args,id:id??`${name}-${Math.random()}`}]});
 const stop=text=>({stopReason:'stop',content:[{type:'text',text}]});
@@ -33,22 +33,23 @@ function fixture({missing=false}={}) {
       ...(value??stop(JSON.stringify({reviewed:true,changes:[]})))};
     return {result:async()=>response};
   }}};
-  const adapter=registerMemoryMaintenance({events:bus,on:(n,f)=>hooks.set(n,f)}, {packageVersion:'0.5.0',skillsDir:join(root,'skills'),getBinary:()=>binary,busy:()=>false});
+  const adapter=registerMemoryMaintenance({events:bus,on:(n,f)=>hooks.set(n,f)}, {packageVersion:'0.5.0',skillsDir:join(root,'skills'),busy:()=>false});
   const entries=[{index:1,id:'a',parentId:null,timestampMs:1,role:'user',text:'Retain verified rationale, but qualify uncertainty rather than waiting for a human.'}];
   const source={path:join(cwd,'source.jsonl'),cwd,hash:hash(entries),entries};writeFileSync(source.path,JSON.stringify(source)+'\n');
   const run=async(operation,extra={})=>{const r={protocol:1,operation,cwd,context:ctx,source,workDir:join(cwd,'work'),memoryOwnership:'full',assertSource(){},onEvent:(type,detail)=>events.push({type,detail}),...extra};bus.emit('okf:maintenance:v1',r);return r.result;};
-  return {cwd,bundle,ctx,run,events,prompts,set sequence(v){sequence=v},get calls(){return calls},async close(){await adapter.stop();rmSync(cwd,{recursive:true,force:true})}};
+  return {cwd,bundle,ctx,run,source,events,prompts,set sequence(v){sequence=v},get calls(){return calls},async close(){await adapter.stop();rmSync(cwd,{recursive:true,force:true})}};
 }
 function seedInvalid(f) {
   cli('create','decision',f.bundle,'--type','Decision','--title','Rationale','--desc','Rationale with review evidence.','--body','Earlier claim needs evidence review.');
   const path=join(f.bundle,'decision.md');const original=readFileSync(path,'utf8');
-  writeFileSync(path,original.replace('---\n','---\ngovernance: invalid\nstale_after: 2000-01-01\n'));
+  // Natively invalid: a concept without a description cannot be indexed. The expired date is only advisory.
+  writeFileSync(path,original.replace('description: Rationale with review evidence.\n','description:\nstale_after: 2000-01-01\n'));
   writeFileSync(join(f.cwd,'evidence.txt'),'Repository evidence: the earlier rationale was a proposal, not an established fact.\n');
   return {path,original};
 }
 function evidenceRepair(f) {
   return [tool('read',{path:'../evidence.txt'}),tool('edit',{path:'decision.md',edits:[
-    {oldText:'governance: invalid\nstale_after: 2000-01-01\n',newText:'governance: context\n'},
+    {oldText:'description:\nstale_after: 2000-01-01\n',newText:'description: Historical proposal with qualified rationale.\n'},
     {oldText:'Earlier claim needs evidence review.',newText:'Historical proposal, not an established fact. Repository evidence does not establish implementation; retain only this qualified rationale.'},
   ]}),stop('Reviewed repository evidence, corrected malformed governance and qualified the historical claim. No human verification is asserted.')];
 }
@@ -188,16 +189,16 @@ test('full ownership treats missing author identity as an external prerequisite,
   }finally{await f.close();for(const [k,v]of Object.entries(saved)){if(v===undefined)delete process.env[k];else process.env[k]=v}}
 });
 
-test('full recovery investigates source evidence and repairs schema/governance/staleness, then verifies and commits',async()=>{
+test('full recovery investigates source evidence and repairs an invalid concept, then verifies and commits',async()=>{
   const f=fixture();let spend=0;
   try {
     await f.run('upgrade');const {path}=seedInvalid(f);f.sequence=evidenceRepair(f);const calls=f.calls;
     const result=await f.run('review',{onUsage:u=>spend+=u.cost.total});
     assert.equal(result.complete,false);assert.equal(result.detail.recovered,true);assert.equal(f.calls,calls+3);assert.equal(spend,.03);
-    assert.equal(validateBundle(binary,f.bundle).ok,true);assert.match(readFileSync(path,'utf8'),/Historical proposal, not an established fact/);
+    assert.equal(validateBundle(f.bundle).ok,true);assert.match(readFileSync(path,'utf8'),/Historical proposal, not an established fact/);
     assert.equal(git(f.bundle,'status','--porcelain'),'');
     const state=JSON.parse(readFileSync(result.detail.casePath,'utf8'));assert.equal(state.status,'complete');assert.ok(state.checkpoints.length);
-    const backup=JSON.parse(readFileSync(state.checkpoints[0],'utf8'));assert.match(backup.files['decision.md'],/governance: invalid/);
+    const backup=JSON.parse(readFileSync(state.checkpoints[0],'utf8'));assert.match(backup.files['decision.md'],/description:\nstale_after: 2000-01-01/);
     assert.equal((await f.run('review')).complete,true);
     assert.ok(f.events.some(e=>e.type==='recovery-result'));assert.ok(f.prompts.some(p=>p.tools?.some(t=>t.name==='bash')));
   }finally{await f.close()}
@@ -260,7 +261,7 @@ test('false model completion cannot complete invalid memory or wait for a human;
   try {
     await f.run('upgrade');seedInvalid(f);f.sequence=Array.from({length:8},()=>stop('Done; ask a human for repair approval.'));
     await assert.rejects(f.run('review',{recoveryMaxTurns:8}),e=>e.kind==='deferred'&&e.code==='memory-recovery-pending');
-    assert.equal(validateBundle(binary,f.bundle).ok,false);
+    assert.equal(validateBundle(f.bundle).ok,false);
     f.sequence=evidenceRepair(f);assert.equal((await f.run('review')).detail.recovered,true);
   }finally{await f.close()}
 });
@@ -296,11 +297,11 @@ test('missing provider access is a verified external prerequisite, not a login d
   }finally{await f.close()}
 });
 
-test('a corrupt ledger is archived and genuinely re-reviewed; incompatible ledgers never get reset',async()=>{
+test('a corrupt ledger is archived and every step genuinely re-verified; incompatible ledgers never get reset',async()=>{
   const f=fixture();
   try {
     await f.run('upgrade');const file=join(f.bundle,'.pi-okf-memory/state.json');writeFileSync(file,'broken JSON');const calls=f.calls;
-    assert.equal((await f.run('status')).upgraded,false);await f.run('upgrade');assert.equal(f.calls,calls+1);
+    assert.equal((await f.run('status')).upgraded,false);await f.run('upgrade');assert.equal(f.calls,calls,'re-running deterministic steps needs no model');
     assert.equal((await f.run('status')).upgraded,true);
     assert.ok(readdirSync(join(f.cwd,'work/recovery',hash(f.bundle))).some(n=>n.startsWith('corrupt-ledger-')));
     writeFileSync(file,JSON.stringify({schema:99,completed:[]}));const bytes=readFileSync(file,'utf8');
@@ -322,36 +323,36 @@ test('malformed extraction falls back to a tool-based review bound to the curren
   }finally{await f.close()}
 });
 
-test('full ownership can finish an oversized-corpus review incrementally without deleting valid memory',async()=>{
+test('an oversized corpus is reviewed by ordinary extraction, with no recovery worker and no memory deleted',async()=>{
   const f=fixture();
   try {
     await f.run('upgrade');cli('create','large',f.bundle,'--title','Large historical evidence','--desc','Preserve historical evidence.','--body','A retained historical line.');
-    // Exceed the selected model's complete-request context estimate, not an
-    // arbitrary corpus cap. Write on disk to avoid Linux's per-argument limit.
+    // Far beyond the model's context if sent whole. Write on disk to avoid Linux's per-argument limit.
     appendFileSync(join(f.bundle,'large.md'),'\n'+'A retained historical line.\n'.repeat(20000));
     const original=readFileSync(join(f.bundle,'large.md'),'utf8');
-    f.sequence=[tool('read',{path:'../source.jsonl'}),input=>{
-      const packet=JSON.parse(input.messages.find(m=>m.role==='user').content);
-      return stop(JSON.stringify({reviewed:true,reviewedSourceHash:packet.source.hash}));
-    }];
-    const result=await f.run('review');assert.equal(result.complete,true);assert.equal(result.detail.recovered,true);
+    f.ctx.model.contextWindow=65536;
+    const result=await f.run('review');assert.equal(result.complete,true);assert.equal(result.detail.recovered,undefined);assert.equal(f.calls,1);
+    const sent=JSON.parse(f.prompts[0].messages[0].content);
+    assert.deepEqual(sent.memory.catalog,['large | Large historical evidence | Preserve historical evidence.']);
+    assert.ok(JSON.stringify(f.prompts[0]).length<100000);
+    assert.equal(f.prompts[0].tools,undefined);
     assert.equal(readFileSync(join(f.bundle,'large.md'),'utf8'),original);assert.equal(git(f.bundle,'status','--porcelain'),'');
   }finally{await f.close()}
 });
 
-test('a failed upgrade proposal can be completed through tool-delivered guides with real ledger verification',async()=>{
+test('an upgrade blocked by an invalid concept is repaired by the worker, then the deterministic step reruns and commits',async()=>{
   const f=fixture();
   try {
-    f.sequence=[stop('invalid upgrade JSON')];await assert.rejects(f.run('upgrade'),e=>e.code==='memory-recovery-pending');
-    f.sequence=[input=>{
-      const packet=JSON.parse(input.messages.find(m=>m.role==='user').content);
-      return {stopReason:'toolUse',content:packet.upgrade.paths.map((path,i)=>({type:'toolCall',id:'guide-'+i,name:'read',arguments:{path}}))};
-    },input=>{
-      const packet=JSON.parse(input.messages.find(m=>m.role==='user').content);
-      return stop(JSON.stringify({reviewedUpgrade:{id:packet.upgrade.id,guideHash:packet.upgrade.guideHash}}));
-    }];
-    const result=await f.run('upgrade');assert.equal(result.complete,true);assert.equal((await f.run('status')).upgraded,true);
-    assert.equal(git(f.bundle,'status','--porcelain'),'');assert.equal(JSON.parse(readFileSync(join(f.bundle,'.pi-okf-memory/state.json'),'utf8')).completed.length,1);
+    const {path}=seedInvalid(f);f.sequence=evidenceRepair(f);
+    const result=await f.run('upgrade');
+    assert.equal(result.complete,true);assert.equal(result.detail.recovered,true);assert.equal(f.calls,3);
+    assert.doesNotMatch(JSON.stringify(f.prompts[0]),/reviewedUpgrade|Executable/);
+    assert.match(f.prompts[0].systemPrompt,/index\.md and catalog\.md are GENERATED/);
+    assert.equal((await f.run('status')).upgraded,true);
+    assert.match(readFileSync(path,'utf8'),/description: Historical proposal with qualified rationale\./);
+    assert.match(readFileSync(join(f.bundle,'catalog.md'),'utf8'),/`decision` \(catalog\) - Historical proposal with qualified rationale\./);
+    assert.equal(git(f.bundle,'status','--porcelain'),'');
+    assert.deepEqual(JSON.parse(readFileSync(join(f.bundle,'.pi-okf-memory/state.json'),'utf8')).completed.map(c=>c.id),['001-validation-contract','002-native-store']);
   }finally{await f.close()}
 });
 
@@ -420,8 +421,69 @@ test('missing root navigation and an existing non-Git corpus repair under full o
     cli('create','one',f.bundle,'--title','Rationale','--desc','Durable rationale.','--body','Keep all original evidence.');
     rmSync(join(f.bundle,'index.md'));rmSync(join(f.bundle,'.git'),{recursive:true});
     const result=await f.run('upgrade',{memoryGitIdentity:{name:'Explicit Agent',email:'agent@example.invalid'}});
-    assert.equal(result.complete,false);assert.equal(validateBundle(binary,f.bundle).ok,true);
+    assert.equal(result.complete,true);assert.equal(f.calls,0);assert.equal(validateBundle(f.bundle).ok,true);
     assert.match(readFileSync(join(f.bundle,'one.md'),'utf8'),/Keep all original evidence/);
-    await f.run('upgrade');assert.equal((await f.run('status')).upgraded,true);
+    assert.match(readFileSync(join(f.bundle,'catalog.md'),'utf8'),/\[Rationale\]\(one\.md\) `one`/);
+    assert.equal((await f.run('status')).upgraded,true);
+  }finally{await f.close()}
+});
+
+const stacked=n=>Array.from({length:n},(_,i)=>`## Session evidence ${String(i).padStart(12,'0')}\n\nAddendum ${i}: the team chose isolated profiles because shared state leaked between runs. See [target](target.md).\n\nSource: "/sessions/s${i}.jsonl"; entries #${i}. Generated review; not human verification.`).join('\n\n');
+test('full ownership consolidates stacked session addenda into one body, one concept per opportunity; Git keeps the earlier wording',async()=>{
+  const f=fixture();
+  try {
+    await f.run('upgrade');
+    cli('create','target',f.bundle,'--title','Target','--desc','Link target.','--body','Target body.');
+    cli('create','stacked',f.bundle,'--title','Isolated profiles','--desc','Why profiles are isolated.','--body',stacked(5));
+    cli('create','short',f.bundle,'--title','Short','--desc','Only three addenda.','--body',stacked(3));
+    git(f.bundle,'add','-A');git(f.bundle,'commit','--quiet','-m','seed');
+    const before=readFileSync(join(f.bundle,'stacked.md'),'utf8');
+    const rewritten='## Decision\n\nProfiles are isolated because shared state leaked between runs; five sessions reached the same conclusion. See [target](target.md).\n\n## Sources\n\n- /sessions/s0.jsonl through /sessions/s4.jsonl';
+    // 1) A rewrite that drops the concept's link is rejected and costs only that attempt.
+    f.sequence=[stop(rewritten.replace(' See [target](target.md).',' '+'Padding sentence. '.repeat(6)))];
+    const rejected=await f.run('review');
+    assert.equal(rejected.complete,false);assert.equal(rejected.detail.consolidationSkipped,'stacked');
+    assert.equal(readFileSync(join(f.bundle,'stacked.md'),'utf8'),before);
+    assert.match(f.events.find(e=>e.type==='consolidation-skipped').detail.reason,/dropped links to target\.md/);
+    // 2) An acceptable rewrite replaces the body, keeps frontmatter identity and is committed on its own.
+    f.sequence=[input=>{
+      assert.match(input.systemPrompt,/Return ONLY the rewritten Markdown body/);
+      assert.deepEqual(Object.keys(JSON.parse(input.messages[0].content).memory),['stacked']); // only this concept is sent
+      return stop('```markdown\n'+rewritten+'\n```');
+    }];
+    const result=await f.run('review');
+    assert.equal(result.complete,false);assert.equal(result.detail.consolidated,'stacked');
+    const after=readFileSync(join(f.bundle,'stacked.md'),'utf8');
+    assert.match(after,/^---\ntype: Fact\ntitle: Isolated profiles\ndescription: Why profiles are isolated\.\n/);
+    assert.ok(after.includes(rewritten));assert.doesNotMatch(after,/Session evidence|```/);
+    assert.match(after,/_Consolidated from 5 session-evidence sections on \d{4}-\d\d-\d\d by unattended maintenance; not human verification\. Earlier wording is in Git history\._\n$/);
+    assert.ok(after.length<before.length/2);
+    assert.equal(git(f.bundle,'log','-1','--format=%s').trim(),'chore(memory): consolidate stacked');
+    assert.match(git(f.bundle,'show','HEAD~1:stacked.md'),/Addendum 4/);
+    assert.equal(git(f.bundle,'status','--porcelain'),'');
+    // 3) Nothing else qualifies (three addenda is below the threshold), so ordinary extraction resumes.
+    const calls=f.calls;
+    assert.equal((await f.run('review')).complete,true);assert.equal(f.calls,calls+1);
+    assert.match(readFileSync(join(f.bundle,'short.md'),'utf8'),/Session evidence 000000000002/);
+  }finally{await f.close()}
+});
+
+test('a concept that cannot be consolidated is retried once, then left alone until it changes; limited ownership never rewrites bodies',async()=>{
+  const f=fixture();
+  try {
+    await f.run('upgrade');
+    cli('create','target',f.bundle,'--title','Target','--desc','Link target.','--body','Target body.');
+    cli('create','stacked',f.bundle,'--title','Isolated profiles','--desc','Why profiles are isolated.','--body',stacked(4));
+    git(f.bundle,'add','-A');git(f.bundle,'commit','--quiet','-m','seed');
+    const before=readFileSync(join(f.bundle,'stacked.md'),'utf8');
+    f.sequence=[stop('too short'),stop(before+' and even longer than the original body')];
+    assert.equal((await f.run('review')).detail.consolidationSkipped,'stacked');
+    assert.equal((await f.run('review')).detail.consolidationSkipped,'stacked');
+    const calls=f.calls;
+    assert.equal((await f.run('review')).complete,true);assert.equal(f.calls,calls+1); // extraction, not a third attempt
+    assert.equal(readFileSync(join(f.bundle,'stacked.md'),'utf8'),before);
+    const limited=await f.run('review',{memoryOwnership:'limited',source:{...f.source}});
+    assert.equal(limited.detail?.consolidated,undefined);
+    assert.equal(readFileSync(join(f.bundle,'stacked.md'),'utf8'),before);
   }finally{await f.close()}
 });

@@ -39,3 +39,29 @@ export async function waitFor(predicate, message = 'condition', timeout = 5000) 
     await new Promise(resolve => setTimeout(resolve, 10));
   }
 }
+
+/** Build fixtures through the native store with the argument shape the old CLI fixtures used. */
+export function makeCli(memory) {
+  const flag = (args, name) => { const i = args.indexOf(name); return i < 0 ? undefined : args[i + 1]; };
+  return (command, ...args) => {
+    if (command === 'init') return memory.initBundle(args[0]);
+    if (command === 'create' || command === 'update') {
+      const [id, bundle] = args;
+      const tags = flag(args, '--tags');
+      return memory.writeConcept(bundle, { id, type: flag(args, '--type'), title: flag(args, '--title') ?? (command === 'create' ? id.split('/').at(-1) : undefined),
+        description: flag(args, '--desc') ?? (command === 'create' ? `About ${id}.` : undefined), body: flag(args, '--body'), status: flag(args, '--status'),
+        tags: tags === undefined ? undefined : tags.split(',').filter(Boolean), actor: 'agent/cli' });
+    }
+    if (command === 'relate') {
+      const [from, to, bundle] = args;
+      const up = from.split('/').slice(0, -1).map(() => '..').join('/');
+      return memory.writeConcept(bundle, { id: from, append: `# Related Concepts\n- [${to}](${up ? up + '/' : ''}${to}.md): ${flag(args, '--desc') ?? 'related'}`, actor: 'agent/cli' });
+    }
+    throw new Error(`Unsupported fixture command: ${command}`);
+  };
+}
+/** A model-reviewed upgrade step for exercising the review workflow; shipped steps are automatic. */
+export function reviewSteps(validateBundle) {
+  return [{ id: '001-validation-contract', title: 'Review the memory contract', instructions: '001-validation-contract.md',
+    verify(bundle) { const result = validateBundle(bundle); if (!result.ok) throw new Error(`Upgrade verification failed; progress was not advanced.\n${JSON.stringify(result.findings)}`); } }];
+}

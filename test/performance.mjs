@@ -1,13 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
 import { jiti } from "./loader.mjs";
 const { bundleCommitStatus } = await jiti.import(resolve("lib/git.ts"));
 const { bundleCommitStatusAsync } = await jiti.import(resolve("lib/git-status-async.ts"));
-const { requireCurrentContractAsync } = await jiti.import(resolve("lib/contract-async.ts"));
 
 test("async Git proof matches synchronous proof without blocking timer progress", { skip: process.platform === "win32" }, async () => {
   const dir = mkdtempSync(join(tmpdir(), "okf-async-proof-"));
@@ -33,21 +32,4 @@ test("async Git proof matches synchronous proof without blocking timer progress"
     assert.equal((await bundleCommitStatusAsync(dir)).pending, true);
     assert.equal((await bundleCommitStatusAsync(dir)).pending, bundleCommitStatus(dir).pending);
   } finally { process.env.PATH = oldPath; rmSync(dir, { recursive: true, force: true }); }
-});
-
-test("binary checks share unchanged executable work and reject an edited incompatible binary", { skip: process.platform === "win32" }, async () => {
-  const dir = mkdtempSync(join(tmpdir(), "okf-contract-cache-"));
-  try {
-    const binary = join(dir, "okf"), count = join(dir, "calls");
-    const script = version => '#!' + process.execPath + '\n' +
-      'require("node:fs").appendFileSync(' + JSON.stringify(count) + ', "x"); console.log("okf version ' + version + '");\n';
-    writeFileSync(binary, script("v0.7.0")); chmodSync(binary, 0o700);
-    assert.deepEqual(await Promise.all([requireCurrentContractAsync(binary), requireCurrentContractAsync(binary)]), ["v0.7.0", "v0.7.0"]);
-    assert.equal(readFileSync(count, "utf8"), "x");
-    writeFileSync(binary, script("v0.8.0"));
-    assert.equal(await requireCurrentContractAsync(binary), "v0.8.0");
-    writeFileSync(binary, script("v0.9.0"));
-    await assert.rejects(requireCurrentContractAsync(binary), /outside the tested range/);
-    assert.equal(readFileSync(count, "utf8"), "xxx");
-  } finally { rmSync(dir, { recursive: true, force: true }); }
 });

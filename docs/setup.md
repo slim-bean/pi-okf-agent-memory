@@ -46,9 +46,12 @@ Provisioning may create/restore the bundle and its intended worktree before laun
 For a **known-new standalone** bundle only, the essential operations are:
 
 ```bash
-"$OKF" init "$BUNDLE"   # exact installed native binary; it may not be on PATH
+mkdir -p "$BUNDLE" && printf '# Knowledge\n' > "$BUNDLE/index.md"
 git -C "$BUNDLE" init
 ```
+
+`index.md` marks the directory as a bundle; its content does not matter because the first
+upgrade regenerates it (with `catalog.md`) from the concepts. There is no memory binary to call.
 
 Do not use this recipe as a blind repair command for restored or existing storage. Inspect existing worktree metadata first, and reuse an enclosing repository rather than creating nested history. The extension's host setup path handles those checks. Neither provisioning nor `git init` completes package upgrade review. No seed concepts are necessary.
 

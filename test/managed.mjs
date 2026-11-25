@@ -5,7 +5,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { dirname, join } from 'node:path';
 import { tmpdir, hostname } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { createHarness, waitFor } from './support.mjs';
+import { createHarness, waitFor, reviewSteps } from './support.mjs';
 import { jiti } from './loader.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -13,24 +13,26 @@ const work = mkdtempSync(join(tmpdir(), 'pi-okf-managed-'));
 const saved = Object.fromEntries(['OKF_BIN', 'OKF_KNOWLEDGE_DIR', 'GIT_CONFIG_GLOBAL', 'GIT_CONFIG_NOSYSTEM'].map(k => [k, process.env[k]]));
 delete process.env.OKF_BIN; delete process.env.OKF_KNOWLEDGE_DIR;
 process.env.GIT_CONFIG_GLOBAL = '/dev/null'; process.env.GIT_CONFIG_NOSYSTEM = '1';
-const { resolveOkfBin } = await jiti.import(join(root, 'index.ts'));
+const memory = await jiti.import(join(root, 'lib/memory.ts'));
 const { registerUpgrades } = await jiti.import(join(root, 'lib/upgrade-extension.ts'));
-const { UpgradeRunner, UPGRADE_STEPS } = await jiti.import(join(root, 'lib/upgrades.ts'));
-const { resolveKnowledgeDir } = await jiti.import(join(root, 'lib/okf.ts'));
+const { UpgradeRunner } = await jiti.import(join(root, 'lib/upgrades.ts'));
+const { resolveKnowledgeDir, validateBundle } = memory;
 const { idleBlocker, UPGRADE_HOST } = await jiti.import(join(root, 'lib/managed-upgrades.ts'));
-const binary = resolveOkfBin(), skillsDir = join(root, 'skills');
+const skillsDir = join(root, 'skills');
+// Host-managed reviews are exercised through a model-reviewed test step; shipped steps are automatic.
+const UPGRADE_STEPS = reviewSteps(validateBundle);
 const packageVersion = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version;
 const git = (dir, ...args) => execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 let sequence = 0;
 const harnesses = [];
 function fixture() {
   const cwd = join(work, `fixture-${++sequence}`), bundle = join(cwd, 'knowledge');
-  execFileSync(binary, ['init', bundle]);
+  memory.initBundle(bundle);
   git(bundle, 'init', '-q'); git(bundle, 'config', 'user.name', 'Host Tests'); git(bundle, 'config', 'user.email', 'host-tests@example.invalid'); git(bundle, 'config', 'commit.gpgSign', 'false');
   return { cwd, bundle };
 }
 function harness(cwd, overrides = {}) {
-  const h = createHarness(pi => registerUpgrades(pi, { skillsDir, packageVersion, getBinary: () => binary, getBundle: resolveKnowledgeDir, ...overrides }), cwd, { hasUI: false, mode: 'rpc' });
+  const h = createHarness(pi => registerUpgrades(pi, { skillsDir, packageVersion, getBundle: resolveKnowledgeDir, steps: UPGRADE_STEPS, ...overrides }), cwd, { hasUI: false, mode: 'rpc' });
   harnesses.push(h); return h;
 }
 const runner = (bundle, version = packageVersion, steps = UPGRADE_STEPS) => new UpgradeRunner(bundle, skillsDir, version, steps);
@@ -232,7 +234,7 @@ test('input acceptance covers slow preflight; even apparently idle dispatches ke
 
 test('version-only upgrades adopt the newest installed package without replaying old guides', async () => {
   const { cwd, bundle } = fixture();
-  const old = runner(bundle, '0.1.9'); old.acquire(); old.nextInstructions(); old.complete(UPGRADE_STEPS[0].id, binary); old.finalize(binary); old.release();
+  const old = runner(bundle, '0.1.9'); old.acquire(); old.nextInstructions(); old.complete(UPGRADE_STEPS[0].id); old.finalize(); old.release();
   const completed = runner(bundle).readState().completed;
   assert.equal(runner(bundle).status().versionPending, true);
   const h = harness(cwd); await h.emit('session_start'); const req = requestRun(h);

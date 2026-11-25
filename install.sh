@@ -13,18 +13,16 @@ if [ -f "$LEGACY" ] && ! grep -q 'okfMemoryExtension' "$LEGACY"; then
   echo "Unrecognized legacy $LEGACY; inspect/relocate it before installing to avoid duplicate tools." >&2
   exit 1
 fi
-mkdir -p "$EXT/bin" "$TARGET/.pi/skills"
+mkdir -p "$EXT" "$TARGET/.pi/skills"
 # A directory entry point keeps helper modules out of pi's top-level discovery.
 cp "$SRC/index.ts" "$SRC/package.json" "$EXT/"
 cp -R "$SRC/lib" "$EXT/"
 cp -R "$SRC/skills/okf-memory" "$SRC/skills/okf-memory-upgrade" "$TARGET/.pi/skills/"
-# Ship every supported architecture; the extension selects its runtime match.
-cp "$SRC"/bin/okf-* "$SRC/bin/UPSTREAM.json" "$SRC/bin/NOTICES.md" "$EXT/bin/"
-cp "$SRC/bin/okf" "$EXT/bin/okf"
+# Memory is stored natively: binaries copied by earlier releases are no longer used.
+rm -rf "$EXT/bin"
 # Remove our legacy entry point so old local installs do not register twice.
-# Keep the old shared bin/ directory: other extensions may use it.
 if [ -f "$LEGACY" ]; then rm "$LEGACY"; fi
-echo "Installed extension -> $EXT/index.ts (+ bundled OKF binaries)"
+echo "Installed extension -> $EXT/index.ts"
 echo "Installed skills    -> $TARGET/.pi/skills/okf-memory{,-upgrade}/"
 
 # All installation paths use the same session-time setup. Installation itself

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test, after } from 'node:test';
 import { createHash } from 'node:crypto';
-import { createHarness } from './support.mjs';
+import { createHarness, makeCli, reviewSteps } from './support.mjs';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { hostname, tmpdir } from 'node:os';
@@ -11,19 +11,22 @@ import { jiti } from './loader.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const work = mkdtempSync(join(tmpdir(), 'pi-okf-test-'));
-const env = { OKF_BIN: process.env.OKF_BIN, OKF_KNOWLEDGE_DIR: process.env.OKF_KNOWLEDGE_DIR, GIT_CONFIG_GLOBAL: process.env.GIT_CONFIG_GLOBAL, GIT_CONFIG_NOSYSTEM: process.env.GIT_CONFIG_NOSYSTEM };
+const env = { OKF_KNOWLEDGE_DIR: process.env.OKF_KNOWLEDGE_DIR, GIT_CONFIG_GLOBAL: process.env.GIT_CONFIG_GLOBAL, GIT_CONFIG_NOSYSTEM: process.env.GIT_CONFIG_NOSYSTEM };
 process.env.GIT_CONFIG_GLOBAL = '/dev/null';
 process.env.GIT_CONFIG_NOSYSTEM = '1';
-delete process.env.OKF_BIN;
 delete process.env.OKF_KNOWLEDGE_DIR;
-const { default: extension, resolveOkfBin } = await jiti.import(join(root, 'index.ts'));
-const { UpgradeRunner, UPGRADE_STEPS } = await jiti.import(join(root, 'lib/upgrades.ts'));
+const { default: nativeExtension, createMemoryExtension } = await jiti.import(join(root, 'index.ts'));
+const { UpgradeRunner, UPGRADE_STEPS: NATIVE_STEPS } = await jiti.import(join(root, 'lib/upgrades.ts'));
 const { registerUpgrades } = await jiti.import(join(root, 'lib/upgrade-extension.ts'));
-const { validateBundle, resolveKnowledgeDir } = await jiti.import(join(root, 'lib/okf.ts'));
-const binary = resolveOkfBin();
+const memory = await jiti.import(join(root, 'lib/memory.ts'));
+const { validateBundle, resolveKnowledgeDir } = memory;
+// The shipped steps are deterministic. These tests cover the model-reviewed workflow,
+// which stays available for future steps, through one reviewed test step.
+const UPGRADE_STEPS = reviewSteps(validateBundle);
+const extension = createMemoryExtension({ steps: UPGRADE_STEPS });
 const skills = join(root, 'skills');
 const packageVersion = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version;
-const cli = (...args) => execFileSync(binary, args, { encoding: 'utf8' });
+const cli = makeCli(memory);
 const git = (cwd, ...args) => execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 function initGit(cwd) {
   git(cwd, 'init', '--quiet');
@@ -53,25 +56,6 @@ function setFrontmatter(bundle, text) {
 after(() => {
   rmSync(work, { recursive: true, force: true });
   for (const [key, value] of Object.entries(env)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
-});
-
-test('vendored version, executable selection, checksums, explicit override failure', () => {
-  const manifest = JSON.parse(readFileSync(join(root, 'bin/UPSTREAM.json'), 'utf8'));
-  assert.equal(manifest.version, 'v0.8.0');
-  assert.match(cli('--version'), /v0\.8\.0/);
-  const arch = process.arch === 'x64' ? 'amd64' : process.arch;
-  assert.equal(binary, join(root, `bin/okf-${process.platform}-${arch}`));
-  for (const [name, sha] of Object.entries(manifest.binaries)) assert.equal(createHash('sha256').update(readFileSync(join(root, 'bin', name))).digest('hex'), sha);
-  assert.equal(manifest.sourceBuilds['okf-linux-amd64'].CGO_ENABLED, '0');
-  for (const name of ['okf-linux-amd64', 'okf-linux-arm64']) {
-    const elf = readFileSync(join(root, 'bin', name));
-    assert.deepEqual([...elf.subarray(0, 5)], [0x7f, 0x45, 0x4c, 0x46, 2]);
-    const start = Number(elf.readBigUInt64LE(32)), size = elf.readUInt16LE(54), count = elf.readUInt16LE(56);
-    for (let i = 0; i < count; i++) assert.notEqual(elf.readUInt32LE(start + i * size), 3, `${name} must not require a dynamic interpreter`);
-  }
-  process.env.OKF_BIN = join(work, 'missing-binary');
-  assert.equal(resolveOkfBin(), process.env.OKF_BIN);
-  delete process.env.OKF_BIN;
 });
 
 test('startup notices, status, and reload are read-only and do not trigger a turn', async () => {
@@ -107,8 +91,8 @@ test('approval is required; canonical instructions, completion, and fresh-sessio
   h.ctx.approve = true;
   await h.command();
   assert.equal(h.prompts.length, 1);
-  assert.match(h.prompts[0], /001 — OKF 0.4 validation/);
-  assert.match(h.prompts[0], /no required format conversion/);
+  assert.match(h.prompts[0], /001 — Baseline contract/);
+  assert.doesNotMatch(h.prompts[0], /executable|PATH/);
   assert.equal(existsSync(runner(bundle).lockPath), true);
   await assert.rejects(h.call('memory_upgrade', { action: 'complete', step: '999-skip' }), /Cannot skip/);
   await assert.rejects(h.call('memory_upgrade', { action: 'finalize' }), /Complete every upgrade step/);
@@ -120,7 +104,7 @@ test('approval is required; canonical instructions, completion, and fresh-sessio
   assert.equal(git(bundle, 'show', 'HEAD:.pi-okf-memory/state.json'), readFileSync(runner(bundle).statePath, 'utf8'));
   assert.equal(git(bundle, 'status', '--porcelain'), '');
   assert.doesNotMatch(git(bundle, 'ls-tree', '-r', '--name-only', 'HEAD'), /lock\.json|finalize-pending|\.state-.*\.tmp/);
-  assert.equal(runner(bundle).readState().completed[0].okfVersion, 'v0.8.0');
+  assert.equal(runner(bundle).readState().completed[0].okfVersion, 'native');
   assert.equal(existsSync(runner(bundle).lockPath), false);
   assert.equal(h.statuses.get('okf-upgrade'), undefined);
   const resumed = harness(cwd);
@@ -139,50 +123,136 @@ test('fresh empty bundle is inspected, never seeded or silently marked complete'
   h.ctx.approve = true;
   await h.command();
   await h.call('memory_upgrade', { action: 'complete', step: UPGRADE_STEPS[0].id });
-  assert.equal(validateBundle(binary, bundle).validation.concept_count, 0);
+  assert.equal(validateBundle(bundle).conceptCount, 0);
 });
 
-test('failed validation retains diagnostics; warnings block upgrade completion and persistence claims', async () => {
+test('failed validation retains findings and blocks upgrade completion; navigation alone is regenerated', async () => {
   const { cwd, bundle } = fixture();
-  const index = join(bundle, 'decisions/index.md');
-  const original = readFileSync(index, 'utf8');
-  writeFileSync(index, original.split('\n').filter(line => !line.includes('(storage.md)')).join('\n'));
   const h = harness(cwd);
-  const warning = await h.call('memory_validate');
-  assert.equal(warning.details.exitCode, 0);
-  assert.equal(warning.details.ok, false);
-  assert.match(warning.content[0].text, /not listed in parent index/);
+  // Hand-damaged navigation is not a blocker: validation regenerates it from the concepts.
+  writeFileSync(join(bundle, 'index.md'), '# stale\n');
+  assert.equal(validateBundle(bundle).findings[0].code, 'index-stale');
+  const repaired = await h.call('memory_validate');
+  assert.equal(repaired.details.ok, true);
+  assert.deepEqual(repaired.details.regenerated, ['index.md']);
+  const concept = join(bundle, 'decisions/storage.md');
+  const original = readFileSync(concept, 'utf8');
+  writeFileSync(concept, original + '\nSee [gone](missing-target.md).\n');
+  const broken = await h.call('memory_validate');
+  assert.equal(broken.details.ok, false);
+  assert.equal(broken.details.findings[0].code, 'broken-link');
+  assert.match(broken.content[0].text, /missing-target\.md does not exist/);
   h.ctx.approve = true;
   await h.command();
   await assert.rejects(h.call('memory_upgrade', { action: 'complete', step: UPGRADE_STEPS[0].id }), /Upgrade verification failed/);
   assert.equal(existsSync(runner(bundle).statePath), false);
-  writeFileSync(index, original);
-  const concept = join(bundle, 'decisions/storage.md');
-  const originalConcept = readFileSync(concept, 'utf8');
-  setFrontmatter(bundle, 'governance: invalid');
+  writeFileSync(concept, original.replace(/^title: .*\n/m, ''));
   const invalid = await h.call('memory_validate');
-  assert.equal(invalid.details.exitCode, 1);
   assert.equal(invalid.details.ok, false);
-  assert.match(invalid.content[0].text, /not constraint\|hold\|context/);
-  writeFileSync(concept, originalConcept);
+  assert.match(invalid.content[0].text, /frontmatter has no title/);
+  writeFileSync(concept, original);
+  setFrontmatter(bundle, 'stale_after: 2001-01-01\ncustom_field: kept');
+  const stale = await h.call('memory_validate');
+  assert.equal(stale.details.ok, true); // an expired review date is an advisory, not a blocker
+  assert.equal(stale.details.advisories[0].code, 'stale');
   await h.call('memory_upgrade', { action: 'complete', step: UPGRADE_STEPS[0].id });
 });
 
-test('read tools, path search, limits, and command argument boundaries', async () => {
+test('search ranks sections, show reads concepts, write/move maintain navigation, links and the log', async () => {
   const { cwd, bundle } = fixture();
-  setFrontmatter(bundle, 'governance: constraint\ncode_refs:\n  - src/**');
   const h = harness(cwd);
-  const text = await h.call('memory_search', { query: 'storage', limit: 1 });
-  assert.equal(JSON.parse(text.content[0].text).length, 1);
-  const scoped = await h.call('memory_search', { for_path: 'src/auth/main.ts' });
-  assert.equal(JSON.parse(scoped.content[0].text)[0].governance, 'constraint');
-  const shown = await h.call('memory_show', { concept: 'decisions/storage.md' });
-  assert.deepEqual(JSON.parse(shown.content[0].text).code_refs, ['src/**']);
-  await assert.rejects(h.call('memory_search'), /Supply query/);
-  await assert.rejects(h.call('memory_search', { query: '--help' }), /cannot search/);
-  await assert.rejects(h.call('memory_search', { query: 'help' }), /cannot search/);
-  await assert.rejects(h.call('memory_search', { query: 'storage', limit: 101 }), /limit must/);
-  await assert.rejects(h.call('memory_show', { concept: '--help' }), /concept ID/);
+  const found = JSON.parse((await h.call('memory_search', { query: 'storage privacy', limit: 1 })).content[0].text);
+  assert.equal(found.length, 1);
+  assert.equal(found[0].concept, 'decisions/storage');
+  // A partial match still returns something rather than an empty list.
+  assert.equal(JSON.parse((await h.call('memory_search', { query: 'storage zebra unrelated' })).content[0].text)[0].concept, 'decisions/storage');
+  assert.deepEqual(JSON.parse((await h.call('memory_search', { query: 'zebra' })).content[0].text), []);
+  const shown = (await h.call('memory_show', { concept: 'decisions/storage.md' })).content[0].text;
+  assert.match(shown, /# Storage choice/);
+  assert.match(shown, /Local storage avoids remote exposure/);
+  await assert.rejects(h.call('memory_search', { query: ' ' }), /Supply a query/);
+  await assert.rejects(h.call('memory_search', { query: 'storage', limit: 51 }), /limit must/);
+  await assert.rejects(h.call('memory_show', { concept: '--help' }), /Invalid concept ID/);
+  await assert.rejects(h.call('memory_show', { concept: '../outside' }), /Invalid concept ID/);
+  await assert.rejects(h.call('memory_show', { concept: 'decisions/absent' }), /not found/);
+  await assert.rejects(h.call('memory_write', { concept: 'decisions/new-topic', body: 'x' }), /requires title and description/);
+  await assert.rejects(h.call('memory_write', { concept: 'Bad Id', title: 't', description: 'd' }), /Invalid concept ID/);
+  await assert.rejects(h.call('memory_write', { concept: 'decisions/index', title: 't', description: 'd' }), /Invalid concept ID/);
+  const created = await h.call('memory_write', { concept: 'decisions/new-topic', title: 'New: topic', description: "It's quoted; safely.", type: 'Decision',
+    body: 'Because of [storage](storage.md).', tags: ['alpha', 'beta'] });
+  assert.equal(created.details.created, true);
+  const file = readFileSync(join(bundle, 'decisions/new-topic.md'), 'utf8');
+  assert.match(file, /^---\ntype: Decision\ntitle: "New: topic"\ndescription: "It's quoted; safely\."\ncreated: /);
+  assert.match(file, /tags: \[alpha, beta\]/);
+  assert.match(readFileSync(join(bundle, 'index.md'), 'utf8'), /\* \[New: topic\]\(decisions\/new-topic\.md\) - It's quoted; safely\./);
+  assert.match(readFileSync(join(bundle, 'catalog.md'), 'utf8'), /`decisions\/new-topic` \(active\)/);
+  assert.match(readFileSync(join(bundle, 'log.md'), 'utf8'), /\*\*Creation\*\*: Documented concept `decisions\/new-topic\.md` \(New: topic\)/);
+  await h.call('memory_write', { concept: 'decisions/new-topic', append: '## Later\n\nMore rationale.' });
+  const updated = readFileSync(join(bundle, 'decisions/new-topic.md'), 'utf8');
+  assert.match(updated, /Because of \[storage\]\(storage\.md\)\.\n\n## Later\n\nMore rationale\.\n$/);
+  assert.match(updated, /title: "New: topic"/); // unrelated fields survive an update
+  assert.equal((await h.call('memory_show', { concept: 'decisions/new-topic', section: 'later' })).content[0].text.includes('Because of'), false);
+  await assert.rejects(h.call('memory_write', { concept: 'decisions/new-topic', body: 'a', append: 'b' }), /not both/);
+  await assert.rejects(h.call('memory_write', { concept: 'decisions/new-topic', body: '---\ntitle: x\n---\nbody' }), /frontmatter/);
+  await h.call('memory_write', { concept: 'decisions/storage', append: 'Sibling link: [privacy](privacy.md#why).' });
+  const moved = await h.call('memory_move', { from: 'decisions/storage', to: 'archive/storage' });
+  assert.deepEqual(moved.details.relinked.sort(), ['archive/storage.md', 'decisions/new-topic.md']);
+  assert.match(readFileSync(join(bundle, 'decisions/new-topic.md'), 'utf8'), /\[storage\]\(\.\.\/archive\/storage\.md\)/);
+  assert.match(readFileSync(join(bundle, 'archive/storage.md'), 'utf8'), /\[privacy\]\(\.\.\/decisions\/privacy\.md#why\)/);
+  await assert.rejects(h.call('memory_move', { from: 'decisions/privacy', to: 'archive/storage' }), /already exists/);
+  assert.equal((await h.call('memory_validate')).details.ok, true);
+});
+
+test('usage is recorded once the bundle ignores the ledger; stats, demote and pin commands manage the session index', async () => {
+  const { cwd, bundle } = fixture();
+  const h = harness(cwd);
+  const run = (name, args = '') => h.commands[name](args, h.ctx);
+  const index = () => readFileSync(join(bundle, 'index.md'), 'utf8');
+  const ledger = join(bundle, '.pi-okf-memory/usage.jsonl');
+  await h.emit('session_start', { reason: 'startup' });
+  await h.call('memory_show', { concept: 'decisions/storage' });
+  assert.equal(existsSync(ledger), false, 'a read before adoption must not create files in the bundle');
+  h.ctx.approve = true; await h.command(); await h.call('memory_upgrade', { action: 'complete', step: UPGRADE_STEPS[0].id });
+  const head = git(bundle, 'rev-parse', 'HEAD');
+  await h.emit('session_start', { reason: 'startup' });
+  assert.match(h.messages.at(-1).message.content, /standing rules and recently used concepts only; use memory_search for everything else/);
+  assert.doesNotMatch(h.messages.at(-1).message.content, /executable/i);
+  await h.call('memory_search', { query: 'privacy exposure' });
+  await h.call('memory_show', { concept: 'decisions/storage' });
+  // A direct file read is use too.
+  await h.emit('tool_call', { toolName: 'read', input: { path: join(bundle, 'decisions/privacy.md') } });
+  await h.emit('tool_call', { toolName: 'read', input: { path: join(bundle, 'index.md') } });
+  await h.emit('tool_call', { toolName: 'read', input: { path: join(cwd, 'elsewhere.md') } });
+  const events = readFileSync(ledger, 'utf8').trim().split('\n').map(line => JSON.parse(line)).map(e => [e.k, e.id]);
+  assert.deepEqual(events, [['session', undefined], ['hit', 'decisions/privacy'], ['hit', 'decisions/storage'], ['open', 'decisions/storage'], ['open', 'decisions/privacy']]);
+  assert.equal(git(bundle, 'status', '--porcelain'), '', 'usage never dirties the repository');
+  assert.equal(git(bundle, 'rev-parse', 'HEAD'), head);
+  await run('memory-stats');
+  const report = h.messages.at(-1).message.content;
+  assert.match(report, /2 concepts; index\.md is \d+ chars \(Active budget 2000 chars, demotion after 20 idle sessions\)/);
+  assert.match(report, /active\s+0\s+1\s+1\s+0\s+decisions\/storage/);
+  await run('memory-demote', 'decisions/storage');
+  assert.doesNotMatch(index(), /storage\.md/);
+  assert.match(index(), /1 more concept \(decisions\/ 1\)/);
+  assert.match(h.notices.at(-1)[0], /left the session index/);
+  await run('memory-demote', 'idle');                       // a rebalance respects the manual demotion
+  assert.doesNotMatch(index(), /storage\.md/);
+  await h.call('memory_show', { concept: 'decisions/storage' });   // the next read brings it back
+  assert.match(index(), /storage\.md/);
+  await run('memory-pin', 'decisions/privacy');
+  assert.match(index(), /## Standing rules\n\* \[Privacy\]\(decisions\/privacy\.md\)/);
+  await run('memory-demote', 'decisions/privacy');
+  assert.match(h.notices.at(-1)[0], /is pinned/);
+  await run('memory-pin', 'decisions/privacy off');
+  assert.doesNotMatch(index(), /## Standing rules/);
+  await run('memory-demote', 'decisions/absent');
+  assert.match(h.notices.at(-1)[0], /not found/);
+  await run('memory-consolidate');
+  assert.match(h.notices.at(-1)[0], /No concept has 4 or more stacked/);
+  const prompts = h.prompts.length;
+  await run('memory-consolidate', 'decisions/storage');
+  assert.equal(h.prompts.length, prompts + 1);
+  assert.match(h.prompts.at(-1), /Wait for my approval/);
   assert.equal((await h.call('memory_validate')).details.ok, true);
 });
 
@@ -220,7 +290,7 @@ test('another session completing while confirmation is open does not launch an e
   const h = harness(cwd);
   h.ctx.ui.confirm = async () => {
     const other = runner(bundle);
-    other.acquire(); other.nextInstructions(); other.complete(UPGRADE_STEPS[0].id, binary); other.finalize(binary); other.release();
+    other.acquire(); other.nextInstructions(); other.complete(UPGRADE_STEPS[0].id); other.finalize(); other.release();
     return true;
   };
   await h.command();
@@ -249,24 +319,14 @@ test('headless and busy sessions never start a migration; RPC receives no TUI wi
   assert.equal(rpc.confirmations.length, 0);
 });
 
-test('unsupported binary is diagnosed even after completion; unknown state is not overwritten', async () => {
-  const { cwd, bundle } = fixture();
+test('unknown, newer or corrupt ledger state is refused rather than overwritten', () => {
+  const { bundle } = fixture();
   const r = runner(bundle);
-  r.acquire(); r.nextInstructions(); r.complete(UPGRADE_STEPS[0].id, binary); r.release();
-  const shim = join(work, 'old-okf');
-  writeFileSync(shim, `#!/bin/sh\nif [ "$1" = "--version" ]; then echo 'okf version v0.1.5 (OKF v0.2 specification)'; else exec ${JSON.stringify(binary)} "$@"; fi\n`, { mode: 0o755 });
-  process.env.OKF_BIN = shim;
-  try {
-    const h = harness(cwd);
-    await h.emit('session_start', { reason: 'startup' });
-    assert.match(h.notices[0][0], /outside the tested range/);
-    assert.equal((await h.call('memory_validate')).details.ok, false);
-    await assert.rejects(h.call('memory_search', { for_path: 'src/foo.ts' }), /outside the tested range/);
-    h.ctx.approve = true;
-    await h.command();
-    assert.equal(h.prompts.length, 0);
-  } finally { delete process.env.OKF_BIN; }
+  r.acquire(); r.nextInstructions(); r.complete(UPGRADE_STEPS[0].id); r.release();
   const saved = readFileSync(r.statePath, 'utf8');
+  // A ledger written while an OKF binary was bundled stays readable.
+  writeFileSync(r.statePath, saved.replace('"native"', '"v0.7.0"'));
+  assert.equal(r.status().completed[0].okfVersion, 'v0.7.0');
   writeFileSync(r.statePath, '{"schema":999,"completed":[]}');
   assert.throws(() => r.status(), /Unsupported/);
   assert.throws(() => r.acquire(), /Unsupported/);
@@ -281,16 +341,16 @@ test('skipped releases are processed in order and resume after the last complete
   const steps = ['001-first', '002-second', '003-third'].map(id => ({ id, title: id, instructions: '001-validation-contract.md', verify: () => verified.push(id) }));
   const r = runner(bundle, steps);
   r.acquire();
-  assert.throws(() => r.complete('001-first', binary), /undelivered/);
+  assert.throws(() => r.complete('001-first'), /undelivered/);
   r.nextInstructions();
-  assert.throws(() => r.complete('003-third', binary), /Cannot skip/);
-  r.complete('001-first', binary); r.release();
+  assert.throws(() => r.complete('003-third'), /Cannot skip/);
+  r.complete('001-first'); r.release();
   const resumed = runner(bundle, steps);
   assert.deepEqual(resumed.status().pending.map(x => x.id), ['002-second', '003-third']);
   resumed.acquire();
   assert.match(resumed.nextInstructions(), /Upgrade 2\/3/);
-  resumed.complete('002-second', binary);
-  resumed.nextInstructions(); resumed.complete('003-third', binary); resumed.release();
+  resumed.complete('002-second');
+  resumed.nextInstructions(); resumed.complete('003-third'); resumed.release();
   assert.deepEqual(verified, ['001-first', '002-second', '003-third']);
   assert.throws(() => runner(bundle, steps.slice(0, 2)).status(), /package downgrade/);
 });
@@ -299,7 +359,7 @@ test('multiple step completions in one tool batch cannot bypass instruction deli
   const { cwd, bundle } = fixture();
   const steps = ['001-first', '002-second'].map(id => ({ id, title: id, instructions: '001-validation-contract.md', verify() {} }));
   const h = harness(cwd, { extensionFactory: pi => registerUpgrades(pi, {
-    skillsDir: skills, packageVersion, getBinary: () => binary, getBundle: resolveKnowledgeDir, steps,
+    skillsDir: skills, packageVersion, getBundle: resolveKnowledgeDir, steps,
   }) });
   h.ctx.approve = true;
   await h.command();
@@ -318,7 +378,7 @@ test('multiple step completions in one tool batch cannot bypass instruction deli
 test('malformed completion order and missing instruction assets cannot advance progress', () => {
   const { bundle } = fixture();
   const r = runner(bundle);
-  r.acquire(); r.nextInstructions(); r.complete(UPGRADE_STEPS[0].id, binary); r.release();
+  r.acquire(); r.nextInstructions(); r.complete(UPGRADE_STEPS[0].id); r.release();
   const valid = JSON.parse(readFileSync(r.statePath, 'utf8'));
   writeFileSync(r.statePath, JSON.stringify({ ...valid, completed: [...valid.completed, ...valid.completed] }));
   assert.throws(() => r.status(), /out-of-order/);
@@ -328,7 +388,7 @@ test('malformed completion order and missing instruction assets cannot advance p
   const missing = runner(bundle, [{ ...UPGRADE_STEPS[0], instructions: 'missing.md' }]);
   missing.acquire();
   assert.throws(() => missing.nextInstructions(), /ENOENT/);
-  assert.throws(() => missing.complete(UPGRADE_STEPS[0].id, binary), /undelivered/);
+  assert.throws(() => missing.complete(UPGRADE_STEPS[0].id), /undelivered/);
   assert.equal(existsSync(missing.statePath), false);
   missing.release();
 });
@@ -395,7 +455,7 @@ test('symlinked state is rejected; missing bundle offers setup and explicit bad 
   assert.match(h.notices[0][0], /memory-setup/);
   assert.equal(h.confirmations.length, 1);
   assert.equal(existsSync(join(noBundle, 'knowledge')), false);
-  await assert.rejects(h.call('memory_search', { query: 'foo' }), /No OKF knowledge bundle/);
+  await assert.rejects(h.call('memory_search', { query: 'foo' }), /No knowledge bundle/);
   process.env.OKF_KNOWLEDGE_DIR = join(work, 'missing-explicit-bundle');
   try { assert.equal(resolveKnowledgeDir(cwd), null); }
   finally { delete process.env.OKF_KNOWLEDGE_DIR; }
@@ -415,14 +475,15 @@ test('local installer ships modules/skills and replaces only the recognized lega
   const installed = join(cwd, '.pi/extensions/okf-memory');
   assert.ok(existsSync(join(installed, 'lib/upgrades.ts')));
   assert.ok(existsSync(join(cwd, '.pi/skills/okf-memory-upgrade/steps/001-validation-contract.md')));
+  assert.equal(existsSync(join(installed, 'bin')), false);
   const loaded = await jiti.import(join(installed, 'index.ts'));
-  const h = harness(cwd, { extensionFactory: loaded.default });
+  const h = harness(cwd, { extensionFactory: loaded.createMemoryExtension({ steps: UPGRADE_STEPS }) });
   await h.emit('session_start', { reason: 'startup' });
   assert.equal(h.prompts.length, 0);
   h.ctx.approve = true;
   await h.command();
-  assert.match(h.prompts[0], /001 — OKF 0.4 validation/);
-  assert.ok(h.prompts[0].includes(join(installed, 'bin')));
+  assert.match(h.prompts[0], /001 — Baseline contract/);
+  assert.ok(h.prompts[0].includes(join(cwd, '.pi/skills/okf-memory-upgrade')));
   await h.call('memory_upgrade', { action: 'complete', step: UPGRADE_STEPS[0].id });
   // Reinstallation neither resets the ledger nor nests copied lib/ directories.
   const ledger = readFileSync(runner(bundle).statePath, 'utf8');
@@ -463,7 +524,7 @@ test('failed commit remains pending across sessions and retries without repeatin
 test('previously recorded but uncommitted upgrades are finalized; normal later edits do not reopen them', async () => {
   const { cwd, bundle } = fixture();
   const r = runner(bundle);
-  r.acquire(); r.nextInstructions(); r.complete(UPGRADE_STEPS[0].id, binary); r.release();
+  r.acquire(); r.nextInstructions(); r.complete(UPGRADE_STEPS[0].id); r.release();
   writeFileSync(join(r.stateDir, '.gitignore'), 'lock.json\n.state-*.tmp\n'); // original runner's ignore file
   const ledger = readFileSync(r.statePath, 'utf8');
   const h = harness(cwd);
@@ -509,12 +570,12 @@ test('embedded bundles commit additions and deletions without touching unrelated
 test('a missing repository blocks final success without fabricating Git setup', () => {
   const { bundle } = fixture({ withGit: false });
   const r = runner(bundle);
-  r.acquire(); r.nextInstructions(); r.complete(UPGRADE_STEPS[0].id, binary);
-  assert.throws(() => r.finalize(binary), /finalization is incomplete[\s\S]*not a git repository/);
+  r.acquire(); r.nextInstructions(); r.complete(UPGRADE_STEPS[0].id);
+  assert.throws(() => r.finalize(), /finalization is incomplete[\s\S]*not a git repository/);
   assert.equal(existsSync(join(bundle, '.git')), false);
   assert.equal(r.status().finished, false);
   initGit(bundle);
-  assert.equal(r.finalize(binary).finished, true);
+  assert.equal(r.finalize().finished, true);
   r.release();
 });
 
@@ -544,12 +605,12 @@ test('missing Git identity leaves finalization pending rather than inventing an 
   for (const key of keys) delete process.env[key];
   try {
     const r = runner(bundle);
-    r.acquire(); r.nextInstructions(); r.complete(UPGRADE_STEPS[0].id, binary);
-    assert.throws(() => r.finalize(binary), /finalization is incomplete/);
+    r.acquire(); r.nextInstructions(); r.complete(UPGRADE_STEPS[0].id);
+    assert.throws(() => r.finalize(), /finalization is incomplete/);
     assert.equal(r.status().finished, false);
     assert.equal(spawnSync('git', ['-C', bundle, 'config', '--get', 'user.email']).status, 1);
     initGit(bundle);
-    assert.equal(r.finalize(binary).finished, true);
+    assert.equal(r.finalize().finished, true);
     r.release();
   } finally {
     for (const key of keys) { if (previous[key] === undefined) delete process.env[key]; else process.env[key] = previous[key]; }
@@ -566,8 +627,8 @@ test('ignored metadata cannot cause an empty path list to stage the enclosing re
   writeFileSync(join(cwd, 'outside.txt'), 'unstaged\n');
   const staged = git(cwd, 'diff', '--cached');
   const r = runner(bundle);
-  r.acquire(); r.nextInstructions(); r.complete(UPGRADE_STEPS[0].id, binary);
-  assert.throws(() => r.finalize(binary), /ignored\/missing/);
+  r.acquire(); r.nextInstructions(); r.complete(UPGRADE_STEPS[0].id);
+  assert.throws(() => r.finalize(), /ignored\/missing/);
   assert.equal(git(cwd, 'diff', '--cached'), staged);
   assert.equal(git(cwd, 'show', 'HEAD:outside.txt'), 'base\n');
   assert.equal(r.status().finished, false);
@@ -579,10 +640,10 @@ test('a hook cannot make invalid committed content count as validated success', 
   const hook = join(bundle, '.git/hooks/pre-commit');
   writeFileSync(hook, '#!/bin/sh\nprintf "broken concept without frontmatter\\n" > decisions/privacy.md\ngit add decisions/privacy.md\n', { mode: 0o755 });
   const r = runner(bundle);
-  r.acquire(); r.nextInstructions(); r.complete(UPGRADE_STEPS[0].id, binary);
-  assert.throws(() => r.finalize(binary), /Upgrade verification failed|changed during finalization/);
+  r.acquire(); r.nextInstructions(); r.complete(UPGRADE_STEPS[0].id);
+  assert.throws(() => r.finalize(), /Upgrade verification failed|changed during finalization/);
   assert.equal(git(bundle, 'show', 'HEAD:decisions/privacy.md'), 'broken concept without frontmatter\n');
-  assert.equal(validateBundle(binary, bundle).ok, false);
+  assert.equal(validateBundle(bundle).ok, false);
   assert.equal(r.status().finished, false);
   assert.equal(existsSync(r.finalizePath), true);
   r.release();
@@ -593,8 +654,8 @@ test('verifiers run again after commit even when Git reports a clean bundle', ()
   let checks = 0;
   const steps = [{ ...UPGRADE_STEPS[0], verify() { if (++checks === 3) throw new Error('post-commit verification failed'); } }];
   const r = runner(bundle, steps);
-  r.acquire(); r.nextInstructions(); r.complete(UPGRADE_STEPS[0].id, binary);
-  assert.throws(() => r.finalize(binary), /post-commit verification failed/);
+  r.acquire(); r.nextInstructions(); r.complete(UPGRADE_STEPS[0].id);
+  assert.throws(() => r.finalize(), /post-commit verification failed/);
   assert.equal(checks, 3);
   assert.equal(git(bundle, 'status', '--porcelain'), '');
   assert.equal(r.status().finished, false);
@@ -604,19 +665,19 @@ test('verifiers run again after commit even when Git reports a clean bundle', ()
 test('finalization refuses in-progress Git operations and tracked lock files', () => {
   const { bundle } = fixture();
   const r = runner(bundle);
-  r.acquire(); r.nextInstructions(); r.complete(UPGRADE_STEPS[0].id, binary);
+  r.acquire(); r.nextInstructions(); r.complete(UPGRADE_STEPS[0].id);
   writeFileSync(join(bundle, '.git/MERGE_HEAD'), '0000000000000000000000000000000000000000\n');
-  assert.throws(() => r.finalize(binary), /MERGE_HEAD/);
+  assert.throws(() => r.finalize(), /MERGE_HEAD/);
   rmSync(join(bundle, '.git/MERGE_HEAD'));
   git(bundle, 'add', '--force', '.pi-okf-memory/lock.json');
-  assert.throws(() => r.finalize(binary), /Transient upgrade lock/);
+  assert.throws(() => r.finalize(), /Transient upgrade lock/);
   git(bundle, 'rm', '--cached', '.pi-okf-memory/lock.json');
-  assert.equal(r.finalize(binary).finished, true);
+  assert.equal(r.finalize().finished, true);
   r.release();
 });
 
 test('optional workspace corpus read-only check', { skip: !existsSync('/workspace/knowledge/index.md') }, () => {
   // Never migrate, modify, or assume particular concepts in a user's real bundle.
-  const result = validateBundle(binary, '/workspace/knowledge');
-  assert.ok(Number.isInteger(result.validation.concept_count));
+  const result = validateBundle('/workspace/knowledge');
+  assert.ok(Number.isInteger(result.conceptCount));
 });

@@ -2,6 +2,8 @@
 
 This interface lets a trusted pi host adapter (for example an unattended runtime adapter) run the same upgrade workflow as `/memory-upgrade`, without a console or dialog. It works in TUI, RPC, and host-managed headless runtimes kept alive for the operation. **No persona settings, step allowlist, or environment opt-in are required.** The explicit host `run` request supplies consent for all applicable steps of the currently loaded package.
 
+Since 0.12 every shipped step is a deterministic migration. A run request migrates, verifies and commits inside the request, with **no agent turn or model call**; the prompt, turn-guard and settle behavior described below applies only to a model-reviewed step, which the runner still supports.
+
 There is no automatic network update mechanism here. The host deploys the newest package, restarts/reloads pi, and requests an upgrade for that installed version. An old runtime cannot upgrade itself by naming a version it has not loaded. Startup inspection stays read-only; setup writes require separate user confirmation or an explicit host setup request. Setup alone never starts an agent turn or grants upgrade consent.
 
 ## Responsibilities
@@ -46,11 +48,10 @@ The response has `phase: "status"` and:
 - `snapshot.status.appliedPackageVersion`, `versionPending`: release adoption.
 - `snapshot.status.pending`: ordered remaining step IDs/titles.
 - `snapshot.status.finalization`, `finished`: required Git completion state.
-- `snapshot.version`, `binary`: actual resolved CLI, including overrides.
 - `snapshot.lock`: `null` or the current lock's token, hostname, PID, start time, and optional host `runtimeId`.
 - `maintenance`: local active/queued run and other-maintenance holds.
 
-Malformed/unsupported state or a missing binary produces a structured blocked response. With no bundle, status returns `snapshot.status: null`; run requests are refused. Nothing is bootstrapped implicitly by this upgrade protocol. Missing Git backing is rejected before review dispatch; use the separate setup protocol first.
+Malformed/unsupported state produces a structured blocked response. With no bundle, status returns `snapshot.status: null`; run requests are refused. Nothing is bootstrapped implicitly by this upgrade protocol. Missing Git backing is rejected before review dispatch; use the separate setup protocol first.
 
 ### 2. Run the newest installed version
 
@@ -132,10 +133,10 @@ This API selects behavior inside an already trusted pi process. Event payloads, 
 
 For host integration:
 
-- Publish/pin this package and its native executable checksums; update image contract expectations.
+- Publish/pin this package; it ships no executables. Update image contract expectations.
 - Install a host adapter that requests the latest loaded version on readiness and knows how to coordinate hygiene.
 - Establish the intended agent-owned Git-backed bundle through provisioning or an explicit setup request, then request upgrades with fresh upgrade bindings. Provision identity/signing separately; this extension never invents identity.
 - Route blocked/stalled outcomes to existing monitoring/comm machinery with bounded retries.
-- Test against the host's deployed pi and native architectures, then a real unattended session with no attached operator.
+- Test against the host's deployed pi, then a real unattended session with no attached operator.
 
 Host-specific defaults, deployment files and persona schemas belong to the host, not this package.

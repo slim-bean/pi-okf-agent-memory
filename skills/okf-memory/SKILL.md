@@ -1,49 +1,57 @@
 ---
 name: okf-memory
-description: Persistent project memory in an OKF v0.2 knowledge bundle. Use before substantial work or code edits, after durable decisions/discoveries, for knowledge reviews, and when prior constraints or lessons are unclear.
+description: Persistent project memory stored as Markdown concepts in a Git-backed knowledge bundle. Use before substantial work, after durable decisions/discoveries, for knowledge reviews, and when prior constraints or lessons are unclear.
 ---
 
-# OKF Project Memory
+# Project Memory
 
 ## Write only the WHY
 
 Git records what changed, runbooks how to operate, and workflow logs what was done. Memory records durable rationale, constraints, incident lessons, non-obvious discoveries, and corrections. If already recorded elsewhere or re-derivable in about two minutes, do not store it. Most reviews correctly end with no writes.
 
-## Setup
+## What you see and what you do not
 
-Use `/memory-setup` (user confirmation) or explicit host setup when the bundle/Git worktree is missing. Do not initialize memory/Git autonomously or treat a setup notice as approval. Setup creates no concepts or commits and never grants upgrade consent. Provisioned hosts use the documented `okf:setup:*` protocol; `OKF_SETUP_MODE=manual` suppresses startup dialogs but grants no writes.
+Each session starts with `index.md`: **standing rules** (every `convention/` concept and anything pinned) plus an **Active** set of recently used concepts, held to a small size budget. Everything else is in the bundle but not in your context. `catalog.md` lists every concept ID; it is for people and is not loaded.
+
+So an absent topic in the index means "not recently used", not "unknown". Search before concluding memory has nothing.
 
 ## Read before write
 
-1. Use `memory_search(query="task keywords")` at task start; `memory_show(concept="id")` for relevant hits.
-2. Before editing a subsystem, use `memory_search(for_path="src/example.ts")` to discover governing `code_refs` (when using the supported OKF binary). `hold` requires explicit human signoff, `constraint` must be respected, and `context` is advisory. `convention/` implicitly defaults to constraint. These labels do not override higher-priority instructions.
-3. After the task, search again before any warranted memory write. Update rather than duplicate.
-4. Run `memory_validate`. Claim successful persistence only when `ok` is true: zero blocking errors, gate findings, warnings/drift, broken links or stale-data findings. Isolated concepts are advisory by default; independent topics do not need invented relationships. Inspect advisories without manufacturing links. `OKF_ORPHAN_POLICY=strict` requires no isolated concepts. Report remaining diagnostics honestly.
+1. `memory_search(query="task keywords")` at task start. Results name the best-matching section; partial matches rank lower rather than disappearing.
+2. `memory_show(concept="id")` for relevant hits; pass `section` to read one heading of a long concept.
+3. After the task, search again before any warranted write. Update rather than duplicate.
+
+Reading a concept counts as use and keeps it in the index. Concepts nobody uses for a while leave the index automatically but stay searchable; that is intended, not data loss.
 
 ## Writing
 
-Use the **resolved executable and bundle paths provided by the extension**, shell-quoted; package installation does not add `okf` to PATH. The following uses `"$OKF"` and `"$BUNDLE"` as placeholders for those exact paths:
+Use `memory_write`; there is no memory CLI and the index, catalog and log are maintained for you.
 
-```bash
-"$OKF" create decisions/topic "$BUNDLE" --type Decision --title "..." --desc "One-line rationale" --body "Rationale, alternatives, consequences."
-"$OKF" update decisions/topic "$BUNDLE" --desc "Updated summary" --body "Updated rationale."
-"$OKF" relate decisions/topic decisions/other "$BUNDLE" --desc "Why these decisions relate"
-```
+- **New concept:** `concept` (ID such as `decisions/storage-choice`), `title`, `description` (one or two sentences: this is what the index and search results show), optional `type` (Decision, Constraint, Lesson, Fact, ...) and `body`.
+- **Add to an existing concept:** `append` with a dated section. Prefer this for new evidence or a correction that qualifies earlier text.
+- **Rewrite an existing concept:** `body` replaces the whole body. Read it first and preserve prior meaning and sources; Git history keeps the old wording.
+- **Standing rules:** put rules that must apply in every session under `convention/`. `pinned: true` does the same for a single concept. Both cost context in every session, so use them sparingly.
+- **Retire:** `status: "deprecated"` removes a concept from the index; `memory_move` renames or archives one and rewrites links to it.
 
-CLI create/update maintains the **immediate parent index**. Preserve root navigation separately; do not duplicate every nested concept in the root. Use body flags for prose updates; preserve sources and cite them with matching footnotes. The 0.7 CLI supports type/status/tags updates (empty tags explicitly clear them), but has no dedicated governance/code_refs/stale_after flags: use targeted, reviewed frontmatter edits if needed, then validate. Preserve existing human verification without adding or refreshing it as an agent; a superseded verification remains a real validation blocker. Keep search project-local (`--scope=project` for direct CLI searches); registry layers and scorecards are optional, not persistence gates. Do not pass metadata blocks inside `--body`.
+Then run `memory_validate`. Claim successful persistence only when `ok` is true: every concept has readable frontmatter with a title and description, and every relative Markdown link resolves. Do not invent links to make concepts look connected; independent topics are fine.
+
+Do not hand-edit `index.md` or `catalog.md`: they are regenerated from concept files. Editing a concept file directly is allowed (keep its frontmatter block); run `memory_validate` afterwards to regenerate navigation.
 
 ## Trust and lifecycle
 
-- CLI writes `generated`. Never invent human `verified` records.
-- Use `stale_after: YYYY-MM-DD` for time-bound observations. Do not advance dates without actually reviewing the facts.
+- Writes are stamped as generated. Never invent human `verified` records, and do not modify a concept that carries one without being asked.
+- Use `stale_after: YYYY-MM-DD` in frontmatter for time-bound observations. Do not advance dates without actually reviewing the facts.
 - Preserve prior meaning when correcting a concept. Qualify uncertainty.
 - Never store conversation, chain-of-thought, trivial steps, duplicates, or transient operational state without an expiry.
 
-## Package upgrades are separate
+## Setup and upgrades are separate
 
-A startup notice may request `/memory-upgrade`. Do not perform migrations or edit its ledger autonomously. The user- or host-approved runner supplies every applicable upgrade step in order and verifies completion. Autonomous hosts can start it programmatically; a text reminder is not approval. `/knowledge-review` is a session knowledge review, not an upgrade command.
+Use `/memory-setup` (user confirmation) or explicit host setup when the bundle or its Git worktree is missing; do not initialize memory or Git on your own. A startup notice may request `/memory-upgrade`: do not perform migrations or edit its ledger yourself. Autonomous hosts run both programmatically.
 
 - `/memory-setup`: establish the bundle/Git worktree; `status` is read-only.
-- `/memory-context`: load the root index on demand.
+- `/memory-context`: load the index on demand.
+- `/memory-stats`: which concepts are in the index and how much each is used.
+- `/memory-demote <id>` / `/memory-pin <id>`: remove a concept from the index now, or keep one in it.
+- `/memory-consolidate [id]`: rewrite stacked session addenda into one body, with approval.
 - `/knowledge-review`: review this session for durable rationale.
-- `/memory-upgrade`: review pending package upgrades; `status`, `cancel`, and `unlock` are also available.
+- `/memory-upgrade`: adopt a new package version; `status`, `cancel`, and `unlock` are also available.

@@ -7,14 +7,14 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { jiti } from './loader.mjs';
-import { createHarness } from './support.mjs';
+import { createHarness, makeCli } from './support.mjs';
 process.env.GIT_CONFIG_GLOBAL = '/dev/null';
 process.env.GIT_CONFIG_NOSYSTEM = '1';
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
-const { default: extension, resolveOkfBin } = await jiti.import(join(root, 'index.ts'));
-const binary = resolveOkfBin();
+const { default: extension } = await jiti.import(join(root, 'index.ts'));
+const memory = await jiti.import(join(root, 'lib/memory.ts'));
 const hash = x => createHash('sha256').update(JSON.stringify(x)).digest('hex');
-const cli = (...args) => execFileSync(binary, args, { encoding:'utf8' });
+const cli = makeCli(memory);
 const git = (dir,...args) => execFileSync('git',['-C',dir,...args],{encoding:'utf8'});
 
 function fixture() {
@@ -38,7 +38,7 @@ function fixture() {
     const r={protocol:1,operation,context:h.ctx,cwd,source,workDir:join(cwd,'work'),assertSource(){},...extras};
     h.events.emit('okf:maintenance:v1',r); assert.ok(r.result); return r.result;
   };
-  return {cwd,bundle,h,run,get calls(){return calls},set response(value){response=value},close(){rmSync(cwd,{recursive:true,force:true})}};
+  return {cwd,bundle,h,run,source,get calls(){return calls},set response(value){response=value},close(){rmSync(cwd,{recursive:true,force:true})}};
 }
 
 test('capability is read-only; unattended upgrades and no-change review commit without prompting',async()=>{
@@ -55,23 +55,25 @@ test('capability is read-only; unattended upgrades and no-change review commit w
   } finally {f.close()}
 });
 
-test('corpora above the former fixed cap reach the model intact and cached review stays reusable',async()=>{
+test('review sends the catalog plus the most related text sized to the model, not the whole corpus; cached review stays reusable',async()=>{
   const f=fixture();
   try {
     await f.run('upgrade');
     const bodies=Array.from({length:4},(_,i)=>`Topic ${i}: `+'Independent durable rationale. '.repeat(1800));
     bodies.forEach((body,i)=>cli('create',`large-${i}`,f.bundle,'--title',`Large topic ${i}`,'--desc','Durable independent rationale.','--body',body));
-    const expected=bodies.map((_,i)=>readFileSync(join(f.bundle,`large-${i}.md`),'utf8'));
-    let corpusChars=0;
-    f.response=input=>{
-      const {corpus}=JSON.parse(input.messages[0].content);
-      corpusChars=JSON.stringify(corpus).length;
-      assert.ok(corpusChars>180000);
-      expected.forEach((bytes,i)=>assert.equal(corpus[`large-${i}.md`],bytes));
-      return {reviewed:true,changes:[]};
-    };
+    cli('create','profiles',f.bundle,'--title','Isolated test profiles','--desc','Why tests use isolated profiles.','--body','Persist the rationale for isolated test profiles so personal state is protected.');
+    git(f.bundle,'add','-A');git(f.bundle,'commit','--quiet','-m','seed');
+    // 220 KB of memory cannot fit a 64K-token model; the request still admits and stays complete where it matters.
+    f.h.ctx.model.contextWindow=65536;
+    let seen;
+    f.response=input=>{ seen={chars:JSON.stringify(input).length,...JSON.parse(input.messages[0].content)}; return {reviewed:true,changes:[]}; };
     assert.equal((await f.run('review')).complete,true);
-    assert.ok(corpusChars>180000);
+    assert.ok(seen.chars<110000,`request was ${seen.chars} chars`);
+    assert.equal(seen.memory.catalog.length,5);                                  // every concept is named
+    assert.ok(seen.memory.catalog.includes('profiles | Isolated test profiles | Why tests use isolated profiles.'));
+    assert.equal(seen.memory.concepts.profiles,readFileSync(join(f.bundle,'profiles.md'),'utf8'));   // the related concept arrives whole
+    assert.ok(Object.keys(seen.memory.concepts).length<5);
+    assert.equal(seen.corpus,undefined);
     const calls=f.calls;
     // Validation/freshness reads and cached receipts need no model context.
     f.h.ctx.model.contextWindow=1000;
@@ -105,17 +107,27 @@ test('complete-request admission rejects insufficient model context before calli
   } finally {f.close()}
 });
 
-test('optional model and operation observers capture exact prompts, parsed deltas, usage and commit references',async()=>{
+test('upgrades need no model; review observers capture exact prompts, parsed deltas, usage and commit references',async()=>{
   const f=fixture();const events=[];const operations=[];let cost=0;
+  const observers={onModelEvent:event=>events.push(event),onEvent:(type,detail)=>operations.push({type,detail}),onUsage:usage=>cost+=usage.cost.total};
   try {
-    await f.run('upgrade',{onModelEvent:event=>events.push(event),onEvent:(type,detail)=>operations.push({type,detail}),onUsage:usage=>cost+=usage.cost.total});
+    await f.run('upgrade',observers);
+    assert.deepEqual(events,[]);assert.equal(cost,0);assert.equal(f.calls,0);
+    assert.ok(operations.some(event=>event.type==='commit'&&event.detail.commit));
+    f.response={reviewed:true,changes:[{concept:'decisions/observed',title:'Observed',description:'A committed change.',body:'Durable rationale.',entries:[1]}]};
+    await f.run('review',observers);
     assert.deepEqual(events.map(event=>event.type),['start','delta','end']);
     assert.match(events[0].systemPrompt,/UNTRUSTED/);assert.equal(events[2].message.role,'assistant');
+    assert.match(events[0].systemPrompt,/catalog of EVERY concept/);assert.doesNotMatch(events[0].systemPrompt,/executable|\$OKF/);
     assert.equal(events[0].timeoutMs,600000);assert.ok(events[2].elapsedMs>=0);
-    assert.equal(cost,.01);assert.ok(operations.some(event=>event.type==='commit'&&event.detail.commit));
+    assert.equal(cost,.01);assert.ok(operations.some(event=>event.type==='plan'));
     events.length=0;
-    await assert.rejects(f.run('review',{onModelEvent:event=>{if(event.type==='delta')throw new Error('transcript unavailable');}}),/transcript unavailable/);
-    assert.equal(git(f.bundle,'status','--porcelain'),'');
+    const g=fixture();
+    try {
+      await g.run('upgrade');
+      await assert.rejects(g.run('review',{onModelEvent:event=>{if(event.type==='delta')throw new Error('transcript unavailable');}}),/transcript unavailable/);
+      assert.equal(git(g.bundle,'status','--porcelain'),'');
+    } finally {g.close()}
   }finally{f.close()}
 });
 
@@ -138,7 +150,7 @@ test('timeout and foreground cancellation record their actual causes without kno
   }finally{clearTimeout(keepAlive);f.close()}
 });
 
-test('warranted changes use CLI and commit automatically; stale source prevents writes',async()=>{
+test('warranted changes are written natively and committed automatically; stale source prevents writes',async()=>{
   const f=fixture();
   try {
     await f.run('upgrade');
@@ -171,26 +183,23 @@ test('failed commit retries its checkpoint without another model call, and confi
   } finally {f.close()}
 });
 
-test('orphan-only blocked plans resume validation and commit without another extraction call',async()=>{
-  const f=fixture();const previous=process.env.OKF_ORPHAN_POLICY;
+test('committed review journals from earlier package versions are honoured; a release does not pay for extraction again',async()=>{
+  const f=fixture();
   try {
-    delete process.env.OKF_ORPHAN_POLICY;
     await f.run('upgrade');
-    for(const id of ['independent-one','independent-two']) cli('create',id,f.bundle,'--title',id,'--desc','An independent topic.','--body','Unrelated durable rationale.');
-    let guards=0;
-    await assert.rejects(f.run('review',{assertSource(){if(++guards>=3)throw new Error('source changed')}}),/source changed/); // retain an extraction checkpoint
-    process.env.OKF_ORPHAN_POLICY='strict';
-    const strictKey=(await f.run('status')).key;
-    await assert.rejects(f.run('review'),e=>e.kind==='blocked'&&e.code==='memory-validation'&&e.resource===realpathSync(f.bundle));
-    const calls=f.calls;
-    process.env.OKF_ORPHAN_POLICY='advisory';
-    assert.notEqual((await f.run('status')).key,strictKey);
+    const bundle=realpathSync(f.bundle),source=f.source;
+    // Before 0.12 journals lived in a directory keyed by package version and model.
+    const section=source.entries.map(e=>({...e,startChar:0,endChar:e.text.length}));
+    const legacy=join(f.cwd,'work',hash([bundle,source.path,'fake/offline','1','0.10.0']));
+    mkdirSync(legacy,{recursive:true});
+    writeFileSync(join(legacy,hash(section)+'.json'),JSON.stringify({phase:'committed',corpusHash:'legacy',changes:[],commit:null}));
+    const key=(await f.run('status')).key;
+    assert.doesNotMatch(key,/\d+\.\d+\.\d+/,'the policy key no longer changes with every release');
     const result=await f.run('review');
-    assert.equal(result.complete,true);assert.equal(f.calls,calls);
-    assert.equal(result.detail.advisories[0].code,'isolated-concepts');
+    assert.equal(result.complete,true);assert.equal(f.calls,0);
+    assert.equal(result.key,key);
     assert.equal(git(f.bundle,'status','--porcelain'),'');
-    assert.doesNotMatch(readFileSync(join(f.bundle,'independent-one.md'),'utf8'),/independent-two/);
-  } finally {if(previous===undefined)delete process.env.OKF_ORPHAN_POLICY;else process.env.OKF_ORPHAN_POLICY=previous;f.close()}
+  } finally {f.close()}
 });
 
 test('Git diagnostics provide stable codes for specific next-step guidance',async()=>{
@@ -225,22 +234,21 @@ function seedLinks(f) {
   cli('create','one',f.bundle,'--title','Source','--desc','Refers to the target.','--body','See [target](wrong.md) for the rationale.');
 }
 
-test('index discoverability and description drift repair automatically without a repair model call',async()=>{
+test('hand-edited or stale navigation is regenerated and committed without a model call',async()=>{
   const f=fixture();const operations=[];
   try {
     await f.run('upgrade');
     cli('create','decisions/nested/one',f.bundle,'--title','Nested rationale','--desc','Authoritative description.','--body','Durable rationale.');
-    const index=join(f.bundle,'decisions/nested/index.md');
-    writeFileSync(index,readFileSync(index,'utf8').replace('Authoritative description.','Outdated description.'));
-    writeFileSync(join(f.bundle,'index.md'),'# Knowledge\n\nKeep this navigation prose.\n');
+    git(f.bundle,'add','-A');git(f.bundle,'commit','--quiet','-m','seed');
+    writeFileSync(join(f.bundle,'index.md'),'# Knowledge\n\nHand-written navigation.\n');
+    writeFileSync(join(f.bundle,'catalog.md'),readFileSync(join(f.bundle,'catalog.md'),'utf8').replace('Authoritative description.','Outdated description.'));
     const calls=f.calls;
     const result=await f.run('review',{onEvent:(type,detail)=>operations.push({type,detail})});
-    assert.equal(result.complete,false); assert.equal(f.calls,calls); // deterministic repair needs no model
+    assert.equal(result.complete,false); assert.equal(result.detail.repaired,true); assert.equal(f.calls,calls); // deterministic repair needs no model
     assert.equal((await f.run('review')).complete,true); assert.equal(f.calls,calls+1); // extraction follows
-    assert.match(readFileSync(index,'utf8'),/Authoritative description/);
-    assert.match(readFileSync(join(f.bundle,'index.md'),'utf8'),/Keep this navigation prose/);
-    assert.match(readFileSync(join(f.bundle,'index.md'),'utf8'),/decisions\/index.md/);
-    assert.ok(operations.some(e=>e.type==='repair'));
+    assert.match(readFileSync(join(f.bundle,'catalog.md'),'utf8'),/Authoritative description/);
+    assert.match(readFileSync(join(f.bundle,'index.md'),'utf8'),/generated_by: pi-okf-agent-memory[\s\S]*\[Nested rationale\]\(decisions\/nested\/one\.md\)/);
+    assert.ok(operations.some(e=>e.type==='repair'&&e.detail.files.some(x=>x.file==='index.md')));
     assert.equal(git(f.bundle,'status','--porcelain'),'');
   }finally{f.close()}
 });
@@ -250,7 +258,10 @@ test('broken links repair under the bundle lease, commit, then yield before extr
   try {
     await f.run('upgrade');seedLinks(f);
     const original=readFileSync(join(f.bundle,'one.md'),'utf8');
-    f.response=input=>{ assert.match(input.systemPrompt,/repairs/);assert.match(input.messages[0].content,/broken_links/); return correction(); };
+    f.response=input=>{ assert.match(input.systemPrompt,/repairs/);const sent=JSON.parse(input.messages[0].content);
+      assert.equal(sent.source.validation.findings[0].code,'broken-link');
+      assert.deepEqual(Object.keys(sent.memory).sort(),['catalog.md','one.md']); // the broken file and possible targets, not the corpus
+      return correction(); };
     const calls=f.calls;
     const repaired=await f.run('review',{onEvent:(type,detail)=>events.push({type,detail})});
     assert.equal(repaired.complete,false);assert.equal(repaired.detail.repaired,true);assert.equal(f.calls,calls+1);
@@ -289,9 +300,9 @@ test('unsafe repair proposals cannot alter facts, frontmatter, held concepts or 
     await assert.rejects(f.run('review'),e=>e.code==='memory-validation'&&e.detail.repair.attempts===2);
     await assert.rejects(f.run('review'),/Two repair proposals/);assert.equal(f.calls,calls+2);
     assert.equal(readFileSync(join(f.bundle,'one.md'),'utf8'),original);assert.equal(git(f.bundle,'rev-parse','HEAD'),head);
-    writeFileSync(join(f.bundle,'one.md'),original.replace('---\n','---\ngovernance: hold\n'));
+    writeFileSync(join(f.bundle,'one.md'),original.replace('---\n','---\nverified: { by: human, at: "2026-01-01" }\n'));
     f.response=correction();
-    await assert.rejects(f.run('review'),/held\/human-verified/);
+    await assert.rejects(f.run('review'),/human-verified/);
     assert.match(readFileSync(join(f.bundle,'one.md'),'utf8'),/wrong.md/);
   }finally{f.close()}
 });

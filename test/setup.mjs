@@ -14,18 +14,18 @@ const keys = ['OKF_BIN', 'OKF_KNOWLEDGE_DIR', 'OKF_SETUP_MODE', 'GIT_CONFIG_GLOB
 const saved = Object.fromEntries(keys.map(k => [k, process.env[k]]));
 for (const k of keys) delete process.env[k];
 process.env.GIT_CONFIG_GLOBAL = '/dev/null'; process.env.GIT_CONFIG_NOSYSTEM = '1';
-const { default: extension, resolveOkfBin } = await jiti.import(join(root, 'index.ts'));
+const { default: extension } = await jiti.import(join(root, 'index.ts'));
+const memory = await jiti.import(join(root, 'lib/memory.ts'));
 const { inspectSetup, setupBundle } = await jiti.import(join(root, 'lib/setup.ts'));
 const { UpgradeRunner, UPGRADE_STEPS } = await jiti.import(join(root, 'lib/upgrades.ts'));
 const packageVersion = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version;
 const { default: host } = await jiti.import(join(root, 'examples/managed-host.ts'));
-const binary = resolveOkfBin();
 const git = (cwd, ...args) => execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 let seq = 0;
 function fixture(existing = false) {
   const cwd = join(work, `project ${++seq}`), bundle = join(cwd, 'knowledge');
   mkdirSync(cwd);
-  if (existing) execFileSync(binary, ['init', bundle]);
+  if (existing) memory.initBundle(bundle);
   return { cwd, bundle };
 }
 function harness(cwd, options = {}) {
@@ -79,7 +79,7 @@ test('existing legacy bundle keeps every byte including completed upgrade record
   writeFileSync(join(bundle, '.pi-okf-memory/state.json'), '{"schema":1,"completed":[]}\n');
   const files = ['index.md', 'log.md', '.pi-okf-memory/state.json'];
   const before = files.map(f => readFileSync(join(bundle, f)));
-  const status = setupBundle(cwd, binary, inspectSetup(cwd));
+  const status = setupBundle(cwd, inspectSetup(cwd));
   assert.equal(status.phase, 'ready');
   files.forEach((f, i) => assert.deepEqual(readFileSync(join(bundle, f)), before[i]));
   assert.equal(git(bundle, 'ls-files'), '');
@@ -93,10 +93,10 @@ test('enclosing repository and linked worktrees are reused; unrelated staging un
   writeFileSync(join(cwd, 'outside'), 'staged'); git(cwd, 'add', 'outside');
   const before = git(cwd, 'diff', '--cached');
   assert.equal(inspectSetup(cwd).initGit, false);
-  setupBundle(cwd, binary, inspectSetup(cwd));
+  setupBundle(cwd, inspectSetup(cwd));
   assert.equal(existsSync(join(bundle, '.git')), false); assert.equal(git(cwd, 'diff', '--cached'), before);
   const linked = join(work, `linked ${++seq}`); git(cwd, 'worktree', 'add', '-q', '-b', `branch-${seq}`, linked);
-  assert.equal(setupBundle(linked, binary, inspectSetup(linked)).repository, linked);
+  assert.equal(setupBundle(linked, inspectSetup(linked)).repository, linked);
   assert.equal(existsSync(join(linked, 'knowledge/.git')), false);
 });
 
@@ -110,7 +110,7 @@ test('broken Git metadata, bare repos, dangling links and nonempty non-bundles f
     if (kind === 'nonempty') rmSync(join(bundle, 'index.md'));
     const status = inspectSetup(cwd);
     assert.equal(status.phase, 'blocked', `${kind}: ${JSON.stringify(status)}`);
-    assert.throws(() => setupBundle(cwd, binary, status));
+    assert.throws(() => setupBundle(cwd, status));
   }
 });
 
@@ -121,7 +121,7 @@ test('canonical aliases, missing ancestors, and explicit override never select a
   process.env.OKF_KNOWLEDGE_DIR = 'alias/new/knowledge';
   try {
     const plan = inspectSetup(cwd); assert.equal(plan.bundle, join(actual, 'new/knowledge'));
-    assert.equal(setupBundle(cwd, binary, plan).phase, 'ready');
+    assert.equal(setupBundle(cwd, plan).phase, 'ready');
     assert.equal(existsSync(join(cwd, 'knowledge')), false);
   } finally { delete process.env.OKF_KNOWLEDGE_DIR; }
 });
@@ -129,10 +129,10 @@ test('canonical aliases, missing ancestors, and explicit override never select a
 test('changed plans and active/crashed setup or upgrade locks refuse mutation', () => {
   const { cwd, bundle } = fixture(); const plan = inspectSetup(cwd);
   git(cwd, 'init', '-q');
-  assert.throws(() => setupBundle(cwd, binary, plan), /plan changed/);
+  assert.throws(() => setupBundle(cwd, plan), /plan changed/);
   assert.equal(existsSync(bundle), false);
   mkdirSync(join(cwd, '.knowledge.pi-okf-setup.lock'));
-  assert.throws(() => setupBundle(cwd, binary, inspectSetup(cwd)), /setup lock/);
+  assert.throws(() => setupBundle(cwd, inspectSetup(cwd)), /setup lock/);
   assert.equal(existsSync(bundle), false);
   const f = fixture(true); mkdirSync(join(f.bundle, '.pi-okf-memory')); writeFileSync(join(f.bundle, '.pi-okf-memory/lock.json'), '{}');
   assert.equal(inspectSetup(f.cwd).phase, 'blocked');
@@ -224,7 +224,7 @@ test('Git errors/redirecting environment and nested corrupt metadata cannot sele
     assert.equal(inspectSetup(cwd).initGit, true);
     process.env.PATH = '/nonexistent-okf-test';
     const plan = inspectSetup(cwd); assert.equal(plan.phase, 'blocked');
-    assert.throws(() => setupBundle(cwd, binary, plan));
+    assert.throws(() => setupBundle(cwd, plan));
     assert.equal(existsSync(join(bundle, '.git')), false);
   } finally {
     for (const [key, value] of Object.entries(env)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
@@ -236,8 +236,8 @@ test('Git errors/redirecting environment and nested corrupt metadata cannot sele
 test('legacy finalization failure can be repaired through setup and finalized without replaying review', async () => {
   const { cwd, bundle } = fixture(true);
   const runner = new UpgradeRunner(bundle, join(root, 'skills'), packageVersion);
-  runner.acquire(); runner.nextInstructions(); runner.complete(UPGRADE_STEPS[0].id, binary);
-  assert.throws(() => runner.finalize(binary), /not a git repository/); runner.release();
+  runner.acquire(); runner.runAutomatic();
+  assert.throws(() => runner.finalize(), /not a git repository/); runner.release();
   const ledger = readFileSync(runner.statePath, 'utf8');
   const h = harness(cwd); await h.emit('session_start');
   assert.match(h.widgets.get('okf-upgrade').join('\n'), /Memory setup needed/);
@@ -267,15 +267,21 @@ test('fresh local installation only copies resources; first session uses shared 
   assert.equal(h.prompts.length, 0);
 });
 
-test('opt-in host example handles either load order: setup then upgrade, no dialog', async () => {
-  for (const hostFirst of [false, true]) {
-    const { cwd } = fixture();
-    const h = harness(cwd, { mode: 'tui', extensionFactory: pi => { if (hostFirst) host(pi); extension(pi); if (!hostFirst) host(pi); } });
-    await h.emit('session_start', { reason: 'startup' });
-    await waitFor(() => h.prompts.length === 1, 'upgrade dispatch');
-    assert.equal(inspectSetup(cwd).phase, 'ready');
-    assert.equal(h.confirmations.length, 0);
-    assert.match(h.prompts[0], /HOST-MANAGED REVIEW/);
-    await h.emit('session_shutdown');
-  }
+test('opt-in host example handles either load order: setup, then deterministic upgrade and commit with no dialog or model turn', async () => {
+  const identity = { GIT_AUTHOR_NAME: 'Host Example', GIT_AUTHOR_EMAIL: 'host@example.invalid', GIT_COMMITTER_NAME: 'Host Example', GIT_COMMITTER_EMAIL: 'host@example.invalid' };
+  Object.assign(process.env, identity);
+  try {
+    for (const hostFirst of [false, true]) {
+      const { cwd, bundle } = fixture();
+      const h = harness(cwd, { mode: 'tui', extensionFactory: pi => { if (hostFirst) host(pi); extension(pi); if (!hostFirst) host(pi); } });
+      await h.emit('session_start', { reason: 'startup' });
+      await waitFor(() => existsSync(join(bundle, '.pi-okf-memory/state.json')) && new UpgradeRunner(bundle, join(root, 'skills'), packageVersion).status().finished, 'unattended upgrade');
+      assert.equal(inspectSetup(cwd).phase, 'ready');
+      assert.equal(h.confirmations.length, 0);
+      assert.equal(h.prompts.length, 0, 'shipped upgrade steps need no model turn');
+      assert.deepEqual(JSON.parse(readFileSync(join(bundle, '.pi-okf-memory/state.json'), 'utf8')).completed.map(c => c.id), UPGRADE_STEPS.map(s => s.id));
+      assert.equal(git(bundle, 'status', '--porcelain'), '');
+      await h.emit('session_shutdown');
+    }
+  } finally { for (const key of Object.keys(identity)) delete process.env[key]; }
 });
