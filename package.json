@@ -1,6 +1,6 @@
 {
   "name": "pi-okf-agent-memory",
-  "version": "0.12.0",
+  "version": "0.12.1",
   "description": "Git-native project memory for pi: Markdown concepts, ranked search, a usage-ranked session index, and unattended maintenance. No external binary.",
   "scripts": {
     "test": "node --test test/store.mjs test/smoke.mjs test/managed.mjs test/setup.mjs test/maintenance.mjs test/autonomous.mjs test/diagnostics.mjs test/performance.mjs",

@@ -2,7 +2,7 @@
 
 [pi](https://pi.dev) extension and skills for local, Git-native project memory that retains **why** decisions were made without turning session history into a knowledge dump.
 
-Memory is a directory of Markdown concept files with frontmatter, kept in Git. Package **0.12.0** stores, searches and validates it natively: there is **no external binary**, no database and no build step. Earlier releases wrapped the OKF Agent Memory CLI; the on-disk concept format is unchanged, so existing bundles keep working.
+Memory is a directory of Markdown concept files with frontmatter, kept in Git. Package **0.12.1** stores, searches and validates it natively: there is **no external binary**, no database and no build step. Earlier releases wrapped the OKF Agent Memory CLI; the on-disk concept format is unchanged, so existing bundles keep working.
 
 ## Upgrading from 0.11 or earlier
 
@@ -20,8 +20,8 @@ Removed: the bundled `okf` binaries, `OKF_BIN`, `OKF_ORPHAN_POLICY`, `memory_sea
 
 ```bash
 pi install .                       # this checkout
-pi install git:github.com/slim-bean/pi-okf-agent-memory@v0.12.0
-pi install -l git:github.com/slim-bean/pi-okf-agent-memory@v0.12.0  # project-local
+pi install git:github.com/slim-bean/pi-okf-agent-memory@v0.12.1
+pi install -l git:github.com/slim-bean/pi-okf-agent-memory@v0.12.1  # project-local
 ```
 
 Pinned refs do not move automatically; select a new tag, then restart pi or `/reload`. Git is required.

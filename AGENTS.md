@@ -1,6 +1,6 @@
 # AGENTS.md
 
-pi-okf-agent-memory gives pi a local, Git-backed memory of Markdown concepts. Read `README.md` for usage, the session index, upgrades and development commands. Current package version: 0.12.0. There is no external binary; memory is stored, searched and validated in TypeScript.
+pi-okf-agent-memory gives pi a local, Git-backed memory of Markdown concepts. Read `README.md` for usage, the session index, upgrades and development commands. Current package version: 0.12.1. There is no external binary; memory is stored, searched and validated in TypeScript.
 
 ## Layout
 
