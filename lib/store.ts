@@ -87,7 +87,7 @@ export interface Concept {
 	status?: string; tags: string[]; pinned: boolean; verified: boolean;
 	created?: string; updated?: string; staleAfter?: string; body: string;
 }
-export interface Finding { code: "invalid-concept" | "broken-link" | "symlink" | "index-stale" | "stale"; file: string; message: string; target?: string }
+export interface Finding { code: "invalid-concept" | "broken-link" | "symlink" | "index-stale" | "stale" | "navigation-pending"; file: string; message: string; target?: string }
 
 /** Every Markdown file except generated navigation and the log is a concept.
  * Symlinks are never followed: an agent-owned bundle must contain its own files. */

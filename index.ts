@@ -5,7 +5,7 @@ import { Type } from "typebox";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { moveConcept, repairAndValidate, resolveKnowledgeDir, writeConcept } from "./lib/memory.js";
+import { checkBundle, moveConcept, resolveKnowledgeDir, writeConcept } from "./lib/memory.js";
 import { ID_PATTERN, loadConcepts, readConcept } from "./lib/store.js";
 import { search, sections } from "./lib/search.js";
 import { idleSessions, readUsage, recordUsage } from "./lib/usage.js";
@@ -159,12 +159,11 @@ function memoryExtension(pi: ExtensionAPI, config: { steps?: readonly UpgradeSte
 	pi.registerTool({
 		name: "memory_validate",
 		label: "Memory Validate",
-		description: "Regenerate the index and catalog from concept files, then check that every concept has readable frontmatter with title and description and that every local link resolves. ok:true means zero blocking findings. Expired stale_after dates are advisories.",
+		description: "Regenerate the index and catalog from concept files, then check that every concept has readable frontmatter with title and description and that every local link resolves. ok:true means zero blocking findings. Expired stale_after dates are advisories. While a memory upgrade is pending it only checks concept files and changes nothing.",
 		parameters: Type.Object({}),
 		async execute(_id, _params, _signal, _onUpdate, ctx) {
 			const dir = requireKnowledge(ctx.cwd);
-			const { view, ...result } = repairAndValidate(dir);
-			const details = { ...result, regenerated: view.changed, dir };
+			const details = { ...checkBundle(dir), dir };
 			return text(JSON.stringify(details, null, 2), details);
 		},
 	});

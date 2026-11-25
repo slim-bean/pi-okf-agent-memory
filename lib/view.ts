@@ -97,7 +97,10 @@ export function refreshView(bundle: string, options: { promote?: string[]; demot
 		if (stats.available) {
 			for (const id of [...chosen]) if (idleSessions(stats, id) >= config.demoteIdleSessions) chosen.delete(id);
 			for (const c of concepts) if (eligible(c.id) && stats.concepts[c.id]?.lastStrong !== undefined && idleSessions(stats, c.id) < config.demoteIdleSessions) chosen.add(c.id);
-		} else if (previous === null) for (const c of concepts) if (eligible(c.id)) chosen.add(c.id);
+		}
+		// First generation with no usable history: start from the most recently written
+		// concepts rather than an empty index. Use then takes over.
+		if (previous === null && !chosen.size) for (const c of concepts) if (eligible(c.id)) chosen.add(c.id);
 	}
 	for (const id of options.promote ?? []) if (eligible(id)) chosen.add(id);
 	for (const id of demote) chosen.delete(id);

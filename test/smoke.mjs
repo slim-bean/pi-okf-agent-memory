@@ -158,6 +158,35 @@ test('failed validation retains findings and blocks upgrade completion; navigati
   await h.call('memory_upgrade', { action: 'complete', step: UPGRADE_STEPS[0].id });
 });
 
+test('before a bundle adopts the generated layout, validation and reads change nothing', async () => {
+  const { cwd, bundle } = fixture();
+  // An OKF-CLI-era layout: hand-listed root index plus a per-directory index.
+  writeFileSync(join(bundle, 'index.md'), '---\nokf_version: "0.2"\n---\n\n# Knowledge Base\n- [decisions](decisions/index.md) — Knowledge maintained from session evidence.\n');
+  writeFileSync(join(bundle, 'decisions/index.md'), '# Decisions\n* [Storage choice](storage.md) - Keep memory local for privacy.\n');
+  rmSync(join(bundle, 'catalog.md'));
+  git(bundle, 'add', '-A'); git(bundle, 'commit', '--quiet', '-m', 'okf era');
+  const h = createHarness(nativeExtension, cwd);
+  await h.emit('session_start', { reason: 'startup' });
+  const checked = await h.call('memory_validate');
+  assert.equal(checked.details.ok, true);
+  assert.deepEqual(checked.details.regenerated, []);
+  assert.equal(checked.details.advisories.at(-1).code, 'navigation-pending');
+  await h.call('memory_show', { concept: 'decisions/storage' });
+  await h.call('memory_search', { query: 'storage' });
+  assert.equal(git(bundle, 'status', '--porcelain'), '', 'inspection must not dirty a bundle awaiting its upgrade');
+  // A broken concept is still reported while the upgrade is pending.
+  writeFileSync(join(bundle, 'decisions/storage.md'), readFileSync(join(bundle, 'decisions/storage.md'), 'utf8') + '\n[gone](gone.md)\n');
+  assert.equal((await h.call('memory_validate')).details.findings[0].code, 'broken-link');
+  git(bundle, 'checkout', '--', 'decisions/storage.md');
+  // The deterministic upgrade then adopts the layout; afterwards validation regenerates as usual.
+  h.ctx.approve = true; await h.command();
+  assert.equal(h.prompts.length, 0, 'shipped steps need no model turn');
+  assert.equal(git(bundle, 'status', '--porcelain'), '');
+  assert.equal(existsSync(join(bundle, 'decisions/index.md')), false);
+  writeFileSync(join(bundle, 'index.md'), readFileSync(join(bundle, 'index.md'), 'utf8').replace('Keep memory local', 'Edited by hand'));
+  assert.deepEqual((await h.call('memory_validate')).details.regenerated, ['index.md']);
+});
+
 test('search ranks sections, show reads concepts, write/move maintain navigation, links and the log', async () => {
   const { cwd, bundle } = fixture();
   const h = harness(cwd);

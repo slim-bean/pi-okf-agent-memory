@@ -86,6 +86,8 @@ Search is BM25 over concept *sections*, with title, description, tags and ID wei
 - no concept is a symlink;
 - `index.md` and `catalog.md` match what the concepts generate (the tool regenerates them first, so this only fails for read-only checks).
 
+While a bundle still has the pre-0.12 layout (its upgrade is pending), `memory_validate` and reads change nothing: concept files are checked and a `navigation-pending` advisory explains that the upgrade will generate navigation. A bundle with no usable history starts with its most recently written concepts in Active.
+
 An expired `stale_after` date is an advisory, not a blocker. Structural checks cannot prove that a concept is true.
 
 ## Upgrades

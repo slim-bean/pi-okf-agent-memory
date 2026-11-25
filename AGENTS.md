@@ -25,6 +25,7 @@ pi-okf-agent-memory gives pi a local, Git-backed memory of Markdown concepts. Re
 
 - Reads never create commits. The usage ledger is local and Git-ignored, and is only written once the bundle's `.pi-okf-memory/.gitignore` lists it (otherwise a read would dirty a tracked file and reopen a finished upgrade).
 - `index.md` and `catalog.md` are generated. Anything allowed to write regenerates them before validating; never make stale navigation a reason to call a model or block a host. Read-only checks (upgrade verifiers, status) report it instead.
+- Until a bundle has adopted the generated layout (`catalog.md` exists or `index.md` carries the generated marker), agent-facing checks and reads are read-only; converting navigation is the pending upgrade's job.
 - Demotion changes a line in `index.md`, never a file's path or contents. Promotion on use is immediate; idle demotion runs only with `rebalance` (maintenance, upgrade, `/memory-demote idle`). Standing rules (`convention/`, `pinned: true`) are exempt from usage.
 - Blocking validation is structural only: readable frontmatter with title and description, valid file-name IDs, resolvable local links, no symlinks. Do not add graph, trust or scorecard gates. Expired `stale_after` is advisory.
 - Review requests are sized to the model, not the corpus: catalog of everything plus the most related text. Do not reintroduce whole-corpus prompts. Journals are keyed by source, not package version or model, and committed journals from older releases must keep counting.
