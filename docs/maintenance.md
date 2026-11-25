@@ -148,17 +148,18 @@ whole-repository reconciliation is not granted for unrelated enclosing project s
 - Ordinary review reads all supplied branches. It splits long conversation text without
   sampling and processes at most one new section per opportunity. The reviewer is sent
   `memory.catalog` (one `id | title | description` line for every concept) and
-  `memory.concepts` (full text of the concepts that best match the section, most
-  relevant first; a concept too large for the remaining budget contributes its head and
+  `memory.concepts` (full text of up to six concepts that match the section about as
+  well as the best match, most relevant first; a concept too large for the remaining budget contributes its head and
   matching section, marked as an excerpt). The budget is derived from the selected
-  model's context window and capped at 60,000 characters, so corpus growth does not
+  model's context window and capped at 40,000 characters, so corpus growth does not
   change request size. Model calls are tool-free and use the existing registry, bounded
   to ten minutes by default and 8192 output tokens. Hosts can override the per-call
   deadline with `modelTimeoutMs`; pi-session-maintenance supplies its configurable
   `modelTimeoutSeconds`. Longer deadlines do not disable foreground/peer cancellation.
 - Section journals live under `workDir/<hash(bundle, source path)>` and no longer
-  depend on package version or model. Committed journals written by 0.6–0.11 under the
-  current model are honoured, so adopting a release does not repeat paid extraction.
+  depend on package version or model. A journal written by an earlier release for the
+  same section hash is honoured wherever it sits in `workDir`, so adopting a release
+  or changing the review model does not repeat paid extraction.
 - Full ownership consolidates before extracting: the concept with the most
   `## Session evidence` sections (four or more) is sent alone with a rewrite guide.
   The returned body is accepted only if it is at least 200 characters, shorter than the

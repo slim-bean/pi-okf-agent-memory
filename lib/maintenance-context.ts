@@ -6,13 +6,15 @@ import { loadConcepts, type Concept } from "./store.js";
 import { search, sections } from "./search.js";
 
 export interface ReviewContext { catalog: string[]; concepts: Record<string, string>; omitted: number }
-const EXCERPT_HEAD = 1500, EXCERPT_SECTION = 4000;
+const EXCERPT_HEAD = 1500, EXCERPT_SECTION = 4000, MAX_RELATED = 6, RELATED_FLOOR = 0.35;
 
 export function reviewContext(bundle: string, query: string, budgetChars: number, concepts: Concept[] = loadConcepts(bundle).concepts): ReviewContext {
 	const catalog = concepts.map(c => `${c.id} | ${c.title} | ${c.description}`);
 	let remaining = budgetChars - catalog.join("\n").length;
 	const selected: Record<string, string> = {};
-	const ranked = search(concepts, query.slice(0, 20_000), 12);
+	// Only concepts that match about as well as the best one: weak matches cost tokens and add little.
+	const hits = search(concepts, query.slice(0, 20_000), MAX_RELATED);
+	const ranked = hits.filter(hit => hit.score >= (hits[0]?.score ?? 0) * RELATED_FLOOR);
 	let omitted = 0;
 	for (const hit of ranked) {
 		const text = readFileSync(join(bundle, `${hit.concept}.md`), "utf8");

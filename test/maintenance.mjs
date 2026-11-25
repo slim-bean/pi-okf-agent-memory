@@ -189,8 +189,9 @@ test('committed review journals from earlier package versions are honoured; a re
     await f.run('upgrade');
     const bundle=realpathSync(f.bundle),source=f.source;
     // Before 0.12 journals lived in a directory keyed by package version and model.
+    mkdirSync(join(f.cwd,'work','repairs'),{recursive:true});writeFileSync(join(f.cwd,'work','repairs','x.json'),'{}'); // unrelated private state is ignored
     const section=source.entries.map(e=>({...e,startChar:0,endChar:e.text.length}));
-    const legacy=join(f.cwd,'work',hash([bundle,source.path,'fake/offline','1','0.10.0']));
+    const legacy=join(f.cwd,'work',hash([bundle,source.path,'another/model','1','0.10.0'])); // any model, any release
     mkdirSync(legacy,{recursive:true});
     writeFileSync(join(legacy,hash(section)+'.json'),JSON.stringify({phase:'committed',corpusHash:'legacy',changes:[],commit:null}));
     const key=(await f.run('status')).key;

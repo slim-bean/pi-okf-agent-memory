@@ -18,9 +18,6 @@ import { restoreOwnedAccess } from "./owned-access.js";
 import { acknowledgeRepair as acknowledgeStructuralRepair, repairValidation } from "./maintenance-repair.js";
 
 const POLICY = "1"; // extraction checkpoint version: validation policy must not discard saved plans
-/** Releases whose review journals were stored per package version. Their committed
- * sections still count, so adopting this package does not pay for extraction again. */
-const LEGACY_JOURNAL_VERSIONS = ["0.11.0", "0.10.0", "0.9.0", "0.8.0", "0.7.0", "0.6.1", "0.6.0"];
 export { MemoryMaintenanceIssue } from "./maintenance-issue.js";
 import { MemoryMaintenanceIssue } from "./maintenance-issue.js";
 function validated(bundle: string) {
@@ -395,8 +392,22 @@ export function registerMemoryMaintenance(pi: ExtensionAPI, options: { packageVe
         }
         // Journals follow the source, not the package version or model, so releases do not repeat paid extraction.
         const work = join(r.workDir, digest([bundle, r.source.path, "review-2"]));
-        const legacy = LEGACY_JOURNAL_VERSIONS.map(version => join(r.workDir, digest([bundle, r.source!.path, modelKey, POLICY, version])));
-        const stored = (name: string) => [work, ...legacy].map(dir => join(dir, name)).find(path => existsSync(path));
+        // Releases before 0.12 stored journals per package version and model, so each release paid for
+        // extraction again. A section hash identifies the source evidence, so any earlier journal for it
+        // still counts wherever it was stored; prefer one that reached a commit.
+        let earlier: Map<string, string[]> | undefined;
+        const stored = (name: string): string | undefined => {
+          if (existsSync(join(work, name))) return join(work, name);
+          if (!earlier) {
+            earlier = new Map();
+            for (const dir of existsSync(r.workDir) ? readdirSync(r.workDir, { withFileTypes: true }) : []) {
+              if (!dir.isDirectory() || !/^[a-f0-9]{64}$/.test(dir.name) || join(r.workDir, dir.name) === work) continue;
+              for (const file of readdirSync(join(r.workDir, dir.name))) if (file.endsWith(".json")) earlier.set(file, [...(earlier.get(file) ?? []), join(r.workDir, dir.name, file)]);
+            }
+          }
+          const candidates = earlier.get(name) ?? [];
+          return candidates.find(path => { try { return JSON.parse(readFileSync(path, "utf8")).phase === "committed"; } catch { return false; } }) ?? candidates[0];
+        };
         // Split markers only refine the section that failed; other section hashes (and
         // their committed journals) stay stable, so nothing is re-extracted or duplicated.
         const refine = (chunk: Entry[]): Entry[][] => {
@@ -430,7 +441,7 @@ export function registerMemoryMaintenance(pi: ExtensionAPI, options: { packageVe
             const snapshot = digest(corpus(bundle));
             // Size existing memory to the model: the catalog of everything plus the most related text.
             const sourceText = section.map(e => e.text).join("\n");
-            const budget = Math.max(4000, Math.min(60_000, Math.floor(((model.contextWindow - outputBudget(model) - 1000) * 2 - skill.length - 4000 - JSON.stringify(section).length) * 0.85)));
+            const budget = Math.max(4000, Math.min(40_000, Math.floor(((model.contextWindow - outputBudget(model) - 1000) * 2 - skill.length - 4000 - JSON.stringify(section).length) * 0.85)));
             const known = reviewContext(bundle, sourceText, budget);
             let text: string;
             try { text = await call({ path: r.source.path, entries: section }, "Extract only durable WHY, never a transcript or workflow log.", known); }
