@@ -2,7 +2,7 @@
 
 [pi](https://pi.dev) extension and skills for local, Git-native project memory that retains **why** decisions were made without turning session history into a knowledge dump.
 
-Memory is a directory of Markdown concept files with frontmatter, kept in Git. Package **0.12.1** stores, searches and validates it natively: there is **no external binary**, no database and no build step. Earlier releases wrapped the OKF Agent Memory CLI; the on-disk concept format is unchanged, so existing bundles keep working.
+Memory is a directory of Markdown concept files with frontmatter, kept in Git. Package **0.13.0** stores, searches and validates it natively: there is **no external binary**, no database and no build step. Earlier releases wrapped the OKF Agent Memory CLI; the on-disk concept format is unchanged, so existing bundles keep working.
 
 ## Upgrading from 0.11 or earlier
 
@@ -20,8 +20,8 @@ Removed: the bundled `okf` binaries, `OKF_BIN`, `OKF_ORPHAN_POLICY`, `memory_sea
 
 ```bash
 pi install .                       # this checkout
-pi install git:github.com/slim-bean/pi-okf-agent-memory@v0.12.1
-pi install -l git:github.com/slim-bean/pi-okf-agent-memory@v0.12.1  # project-local
+pi install git:github.com/slim-bean/pi-okf-agent-memory@v0.13.0
+pi install -l git:github.com/slim-bean/pi-okf-agent-memory@v0.13.0  # project-local
 ```
 
 Pinned refs do not move automatically; select a new tag, then restart pi or `/reload`. Git is required.
@@ -123,6 +123,8 @@ Install `pi-session-maintenance` to schedule background work through this packag
 
 - **consolidates** a concept that has accumulated four or more session-evidence sections into one coherent body, one concept per opportunity. A rewrite is accepted only if it is shorter, keeps the concept's links and has no leftover per-session headings; Git history holds the earlier wording;
 - runs a shell-capable recovery worker for failures validation cannot fix (for example an unreadable concept file), provisions missing bundles/Git, and applies an explicitly supplied `memoryGitIdentity`.
+
+**Troubleshooting recovery:** Keep one-off analysis dumps outside the knowledge bundle. The 8 MiB checkpoint limit counts input file sizes, not free disk space; untracked and Git-ignored files can count too. If a checkpoint is too large, inspect the reported paths and move confirmed scratch out of the bundle before retrying. Do not delete recovery cases or Git history. If a case repeatedly makes no progress, inspect its attempts and model in `/maintenance status` and consider changing the review model in `/maintenance settings`. If a run uses its turns productively but needs more, adjust the Recovery turn limit there; the host still verifies completion. Bounded runs can continue across idle opportunities without a manual retry.
 
 Full shell scope is cooperative, not a sandbox: it has the process's practical filesystem, network and credential access. Use full-process isolation for unattended deployments. See **[Unattended maintenance protocol](docs/maintenance.md)** for authority, checkpoints, limits and cancellation.
 

@@ -3,6 +3,7 @@ import { Type } from "typebox";
 import { UpgradeRunner, isAutomatic, type UpgradeStep } from "./upgrades.js";
 import { configuredOwnership } from "./ownership.js";
 import { registerManagedUpgrades, type ManagedHooks, type UpgradeSnapshot } from "./managed-upgrades.js";
+import { describeUpgradeAdmission, maintenanceControl, noCoordinator } from "./upgrade-admission.js";
 
 interface Options {
 	skillsDir: string;
@@ -32,6 +33,14 @@ export function registerUpgrades(pi: ExtensionAPI, options: Options) {
 		if (ctx.hasUI) ctx.ui.notify(text, warning ? "warning" : "info");
 		else pi.sendMessage({ customType: "okf-upgrade", content: text, display: true }, { deliverAs: "nextTurn" });
 	};
+
+	function coordinatorStatus(ctx: ExtensionContext) {
+		const locallyFull = configuredOwnership(ctx.cwd) === "full";
+		return maintenanceControl(pi, "status")?.then(
+			status => ({ full: locallyFull || status?.config?.memoryOwnership === "full", status, error: undefined }),
+			error => ({ full: locallyFull, status: undefined, error: error instanceof Error ? error.message : String(error) }),
+		);
+	}
 
 	async function confirm(ctx: ExtensionContext, title: string, message: string) {
 		const generation = approvalGeneration;
@@ -168,6 +177,18 @@ export function registerUpgrades(pi: ExtensionAPI, options: Options) {
 				const data = { packageVersion: options.packageVersion, notice, status };
 				return result(JSON.stringify(data, null, 2), data);
 			}
+			if (params.action === "next" && !active && !managed?.stopping) {
+				const coordinator = await coordinatorStatus(ctx);
+				if ((coordinator?.full ?? configuredOwnership(ctx.cwd) === "full") && !active) {
+					const bundle = options.getBundle(ctx.cwd);
+					let finished = false;
+					try { finished = runnerFor(ctx.cwd)?.status().finished === true; } catch { /* show coordinator diagnosis */ }
+					const hint = finished ? "The installed upgrades are already validated and committed; no next step is needed."
+						: coordinator?.error ? `Coordinator status is unavailable. ${noCoordinator}`
+						: describeUpgradeAdmission(coordinator?.status, ctx.cwd, bundle);
+					throw new Error(`No active upgrade review in this session. Full-ownership upgrades are coordinator-owned; no user approval is needed. ${hint}\nDo not start a parallel review, edit upgrade/recovery state or claim completion.`);
+				}
+			}
 			const runner = requireActive(ctx);
 			if (params.action === "block") {
 				if (!params.reason?.trim()) throw new Error("Explain the blocker in reason.");
@@ -223,12 +244,37 @@ export function registerUpgrades(pi: ExtensionAPI, options: Options) {
 					report(ctx, "Upgrade review cancelled. Completed steps remain recorded; unfinished steps remain pending. Corpus edits, staging, and commits were not rolled back.");
 					return;
 				}
-				const full = configuredOwnership(ctx.cwd) === "full";
-				if (full && action === "review") {
-					const request: { protocol: 1; operation: string; result?: Promise<any> } = { protocol: 1, operation: "run" };
-					pi.events.emit("pi-session-maintenance:control:v1", request);
-					if (!request.result) throw new Error("Full ownership uses the autonomous maintenance coordinator. Load pi-session-maintenance or use the trusted okf:maintenance:v1 host adapter; no interactive approval is requested.");
-					const status = await request.result; report(ctx, status.admission ?? "Autonomous memory maintenance requested; inspect /maintenance status."); return;
+				const generationAtCommand = approvalGeneration;
+				const statusRequest = action === "review" || action === "status" ? coordinatorStatus(ctx) : undefined;
+				const coordinator = statusRequest ? await statusRequest : undefined;
+				if (generationAtCommand !== approvalGeneration) return;
+				const full = coordinator?.full ?? configuredOwnership(ctx.cwd) === "full";
+				if (full && (action === "review" || action === "status")) {
+					let installed: ReturnType<UpgradeRunner["status"]> | undefined;
+					let inspectionError: string | undefined;
+					try { installed = runnerFor(ctx.cwd)?.status(); }
+					catch (error) { inspectionError = error instanceof Error ? error.message : String(error); }
+					const status = coordinator?.status;
+					const describe = (snapshot: typeof status) => describeUpgradeAdmission(snapshot, ctx.cwd, options.getBundle(ctx.cwd));
+					if (action === "status") {
+						const maintenance = installed?.finished ? undefined : coordinator?.error
+							? `Coordinator status unavailable: ${coordinator.error}. ${noCoordinator}` : describe(status);
+						const failure = !installed ? inspectionError ?? "No knowledge bundle is ready yet." : undefined;
+						pi.sendMessage({ customType: "okf-upgrade", content: JSON.stringify({ ...installed, inspectionError: failure, maintenance }, null, 2), display: true }, { deliverAs: "nextTurn" });
+						return;
+					}
+					if (installed?.finished) {
+						report(ctx, `All applicable memory upgrades are complete and recorded in Git (${installed.finalization.commit}).`);
+						return;
+					}
+					if (status?.config?.memoryOwnership === "limited") throw new Error("Memory ownership differs from the running coordinator (limited). Check /maintenance settings or the trusted host configuration before retrying.");
+					if (status?.config?.upgrades === false || status?.running?.stage === "upgrade") { report(ctx, describe(status)); return; }
+					const request = maintenanceControl(pi, "run");
+					if (!request) throw new Error(noCoordinator);
+					const admission = await request;
+					if (generationAtCommand !== approvalGeneration) return;
+					report(ctx, [admission?.admission, describe(admission?.sessions ? admission : status ?? admission)].filter(Boolean).join("\n"));
+					return;
 				}
 				// Recovery must work even when the ledger is broken.
 				const runner = runnerFor(ctx.cwd);

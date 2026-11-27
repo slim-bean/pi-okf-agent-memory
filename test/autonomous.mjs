@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, writeFileSync, appendFileSync, rmSync, readdirSync, existsSync, realpathSync, chmodSync, statSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync, appendFileSync, rmSync, readdirSync, existsSync, realpathSync, chmodSync, statSync, mkdirSync, renameSync, truncateSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -15,6 +15,7 @@ const memory=await jiti.import(join(root,'lib/memory.ts'));
 const {registerMemoryMaintenance}=await jiti.import(join(root,'lib/maintenance.ts'));
 const {validateBundle}=memory;
 const {configuredOwnership}=await jiti.import(join(root,'lib/ownership.ts'));
+const {recoverySnapshot}=await jiti.import(join(root,'lib/autonomous-recovery.ts'));
 process.env.GIT_CONFIG_GLOBAL='/dev/null';process.env.GIT_CONFIG_NOSYSTEM='1';
 const hash=v=>createHash('sha256').update(JSON.stringify(v)).digest('hex');
 const cli=makeCli(memory);
@@ -101,7 +102,8 @@ test('source-bound recovery cannot inherit a different queued session context or
   try {
     await f.run('upgrade');
     f.sequence=[stop('invalid extraction JSON')];
-    await assert.rejects(f.run('review'),e=>e.code==='memory-recovery-pending');
+    await assert.rejects(f.run('review'), e => e.code === 'memory-recovery-pending' &&
+      typeof e.detail.recovery.pendingRepair === 'string' && typeof e.detail.recovery.cause === 'string');
     const entries=[{index:1,id:'other',parentId:null,timestampMs:2,role:'user',text:'Different source rationale.'}];
     const source={path:join(f.cwd,'other.jsonl'),cwd:f.cwd,hash:hash(entries),entries};
     assert.equal((await f.run('review',{source})).complete,true,'another source performs normal extraction');
@@ -140,6 +142,168 @@ test('unchanged checkpoints do not count as progress; three no-op opportunities 
   }finally{await f.close()}
 });
 
+test('oversized checkpoint ranks the largest included files across the entire metadata scan',()=>{
+  const bundle=mkdtempSync(join(tmpdir(),'okf-checkpoint-capacity-'));
+  const limit=8*1024*1024;
+  const sized=(path,bytes)=>{writeFileSync(join(bundle,path),'');truncateSync(join(bundle,path),bytes);};
+  try {
+    mkdirSync(join(bundle,'z-more'));mkdirSync(join(bundle,'.git'));
+    sized('.git/excluded',limit*2);sized('lock.json',limit*2);sized('excluded.tmp',limit*2);
+    sized('a-over',limit+1);sized('z-more/largest',limit+2);
+    symlinkSync('z-more/largest',join(bundle,'z-more-link'));
+    for(const path of ['d','b','c','e','f']) sized(path,100);
+    sized('g',99);
+    assert.throws(()=>recoverySnapshot(bundle),e=>{
+      assert.equal(e.kind,'blocked');assert.equal(e.code,'memory-external');assert.equal(e.resource,bundle);
+      assert.equal(e.detail.external.code,'capacity');
+      assert.deepEqual(e.detail.checkpoint,{bytes:2*limit+602,limitBytes:limit,largest:[
+        {path:join('z-more','largest'),bytes:limit+2},{path:'a-over',bytes:limit+1},
+        {path:'b',bytes:100},{path:'c',bytes:100},{path:'d',bytes:100},
+      ]});
+      assert.match(e.message,/Move verified disposable scratch files outside the bundle, then retry/);
+      assert.ok(e.message.includes(`${JSON.stringify(join('z-more','largest'))} (${limit+2} bytes)`));
+      assert.doesNotMatch(e.message,/excluded|z-more-link|lock\.json/);
+      return true;
+    });
+  }finally{rmSync(bundle,{recursive:true,force:true})}
+});
+
+test('checkpoint capacity blocks mutations; retry preserves ignored and untracked files in the backup',async()=>{
+  const f=fixture();
+  try {
+    await f.run('upgrade');const {path}=seedInvalid(f);
+    const original=readFileSync(path,'utf8');
+    appendFileSync(join(f.bundle,'.git/info/exclude'),'\n.review-scratch/\n');
+    const scratch=join(f.bundle,'.review-scratch');mkdirSync(scratch);
+    writeFileSync(join(scratch,'keep'),'ignored preexisting local work');
+    writeFileSync(join(f.bundle,'local-notes'),'untracked preexisting local work');
+    const dump=join(scratch,'large-dump');
+    const repair=evidenceRepair(f)[1];
+    f.sequence=[()=>{writeFileSync(dump,'');truncateSync(dump,9*1024*1024);return repair;}];
+    const blocked=e=>e.kind==='blocked'&&e.code==='memory-external'&&e.detail.external.code==='capacity'&&
+      e.detail.checkpoint.largest[0].path===join('.review-scratch','large-dump');
+    const before=f.calls;
+    await assert.rejects(f.run('review',{recoveryMaxTurns:5}),blocked);
+    assert.equal(f.calls,before+1,'the bundle grew after the initial snapshot');
+    assert.equal(readFileSync(path,'utf8'),original,'mutation did not run without its checkpoint');
+    assert.equal(f.events.some(e=>e.type==='recovery-tool'||e.type==='recovery-checkpoint'),false);
+    await assert.rejects(f.run('review'),blocked);
+    assert.equal(f.calls,before+1,'known oversized bundles block before calling the model');
+    renameSync(dump,join(f.cwd,'large-dump'));
+    f.sequence=evidenceRepair(f);
+    const result=await f.run('review');
+    assert.equal(result.detail.recovered,true);
+    const state=JSON.parse(readFileSync(result.detail.casePath,'utf8'));
+    assert.equal(state.checkpoints.length,1,'no partial checkpoint was written');
+    const backup=JSON.parse(readFileSync(state.checkpoints[0],'utf8'));
+    assert.equal(backup.files['decision.md'],original);
+    assert.equal(backup.files[join('.review-scratch','keep')],'ignored preexisting local work');
+    assert.equal(backup.files['local-notes'],'untracked preexisting local work');
+  }finally{await f.close()}
+});
+
+test('provider failures reuse one retry prompt, then pause until the recovery baseline changes',async()=>{
+  const f=fixture();
+  try {
+    await f.run('upgrade');seedInvalid(f);
+    const before=f.calls;
+    let casePath;
+    for(let i=1;i<=4;i++) {
+      f.sequence=[input=>{
+        assert.equal(input.messages.length,1,'do not append identical user prompts');
+        assert.equal(input.messages[0].role,'user');
+        return {stopReason:'error',content:[],errorMessage:'Provider temporarily unavailable'};
+      }];
+      await assert.rejects(f.run('review'),e=>{
+        assert.equal(e.code,i<3?'memory-recovery-transient':'memory-recovery-stalled');
+        const detail=e.detail.recovery;
+        casePath=detail.casePath;
+        assert.equal(detail.model,'fake/offline');assert.equal(detail.attempts,i);
+        assert.equal(detail.noProgress,i);assert.equal(detail.lastProgressAt,null);
+        assert.ok(detail.cause);assert.equal(detail.paused,i===4?true:undefined);
+        return true;
+      });
+    }
+    await assert.rejects(f.run('review'),e=>e.code==='memory-recovery-stalled'&&e.detail.recovery.attempts===4);
+    assert.equal(f.calls,before+4,'unchanged retries do not call the provider again');
+    assert.equal(JSON.parse(readFileSync(casePath,'utf8')).messages.length,1);
+    assert.equal(f.events.find(e=>e.type==='recovery-stalled').detail.stallReason,'repeated-tool-free-attempts');
+    f.ctx.model.id='replacement';f.sequence=evidenceRepair(f);
+    assert.equal((await f.run('review')).detail.recovered,true);
+    const done=JSON.parse(readFileSync(casePath,'utf8'));
+    assert.equal(done.noProgress,0);assert.ok(done.lastProgressAt>0);
+  }finally{await f.close()}
+});
+
+test('an aged no-progress case pauses even when the model used tools, then admits a raised recovery turn limit',async()=>{
+  const f=fixture();
+  try {
+    await f.run('upgrade');seedInvalid(f);
+    let casePath;
+    for(let i=0;i<3;i++) {
+      f.sequence=[tool('read',{path:'../evidence.txt'})];
+      await assert.rejects(f.run('review',{recoveryMaxTurns:1}),e=>{casePath=e.detail.recovery.casePath;return i<2?e.code==='memory-recovery-pending':e.code==='memory-recovery-stalled';});
+    }
+    const state=JSON.parse(readFileSync(casePath,'utf8'));
+    assert.equal(state.toolFreeAttempts,0);
+    state.noProgressSince=Date.now()-25*60*60*1000;
+    writeFileSync(casePath,JSON.stringify(state));
+    const before=f.calls;
+    await assert.rejects(f.run('review',{recoveryMaxTurns:1}),e=>e.code==='memory-recovery-stalled'&&e.detail.recovery.stallReason==='no-progress-for-a-day');
+    assert.equal(f.calls,before);
+    // Raise the recovery budget instead of editing the case or fabricating a receipt.
+    f.sequence=evidenceRepair(f);
+    assert.equal((await f.run('review')).detail.recovered,true);
+  }finally{await f.close()}
+});
+
+test('legacy user-only retries are detected before an oversized loaded context is archived',async()=>{
+  const f=fixture();
+  try {
+    await f.run('upgrade');seedInvalid(f);
+    f.sequence=[{stopReason:'error',content:[]}];
+    let casePath;
+    await assert.rejects(f.run('review'),e=>{casePath=e.detail.recovery.casePath;return e.code==='memory-recovery-transient';});
+    const state=JSON.parse(readFileSync(casePath,'utf8'));
+    const prompt=JSON.parse(state.messages[0].content);
+    state.attempts=710;state.messages=Array.from({length:200},(_,i)=>({role:'user',content:JSON.stringify({...prompt,attempt:i+510}),timestamp:Date.now()}));
+    delete state.noProgressSince;delete state.toolFreeAttempts;
+    writeFileSync(casePath,JSON.stringify(state));
+    const before=f.calls;
+    await assert.rejects(f.run('review'),e=>e.code==='memory-recovery-stalled'&&e.detail.recovery.attempts===710&&e.detail.recovery.toolFreeAttempts===200);
+    assert.equal(f.calls,before);
+    const reset=f.events.find(e=>e.type==='recovery-context-reset').detail;
+    assert.equal(reset.reason,'entry limit');assert.equal(JSON.parse(readFileSync(reset.path,'utf8')).length,200);
+    assert.equal(JSON.parse(readFileSync(casePath,'utf8')).messages.length,0);
+  }finally{await f.close()}
+});
+
+for (const capture of [true,false]) test(`entry rotation keeps tool pairs and the opportunity's call limit (transcripts ${capture})`,async()=>{
+  const f=fixture();
+  try {
+    await f.run('upgrade');seedInvalid(f);
+    let longest=0;
+    f.sequence=Array.from({length:100},()=>input=>{
+      longest=Math.max(longest,input.messages.length);
+      return tool('read',{path:'../evidence.txt'});
+    });
+    const before=f.calls;
+    await assert.rejects(f.run('review',{recoveryMaxTurns:100,maxCost:2,modelTranscripts:capture}),e=>e.code==='memory-recovery-pending'&&/after 100 model turns/.test(e.message));
+    assert.equal(f.calls-before,100);assert.ok(longest<192);
+    const reset=f.events.find(e=>e.type==='recovery-context-reset').detail;
+    assert.equal(reset.reason,'entry limit');assert.equal(reset.entries,193);
+    if(capture) {
+      const messages=JSON.parse(readFileSync(reset.path,'utf8'));
+      assert.equal(messages[0].role,'user');
+      for(let i=1;i<messages.length;i+=2) assert.equal(messages[i].content[0].id,messages[i+1].toolCallId);
+    } else {
+      assert.equal(reset.path,undefined);
+      assert.deepEqual(JSON.parse(readFileSync(reset.casePath,'utf8')).messages,[]);
+      assert.ok(!readdirSync(dirname(reset.casePath)).some(name=>name.startsWith('transcript-')));
+    }
+  }finally{await f.close()}
+});
+
 test('ownership defaults to limited without host autodetection; generic explicit policy wins',()=>{
   const env={...process.env};const cwd=mkdtempSync(join(tmpdir(),'ownership-'));
   try {
@@ -163,6 +327,52 @@ test('full mode offers no startup dialogs and legacy setup/upgrade commands need
     assert.ok(h.messages.some(m=>m.message.content?.includes('Started autonomous upgrade')));
     const injected=await h.emit('before_agent_start');assert.ok(injected.some(r=>r?.message?.content?.includes('Full agent memory ownership')));
   }finally{await h.emit('session_shutdown');process.env=env;rmSync(cwd,{recursive:true,force:true})}
+});
+
+test('full upgrade admission and next explain a scoped recovery issue without approving a review', async () => {
+  const cwd = realpathSync(mkdtempSync(join(tmpdir(), 'okf-upgrade-admission-')));
+  const bundle = join(cwd, 'knowledge');
+  cli('init', bundle);
+  git(bundle, 'init', '--quiet');
+  const h = createHarness(extension, cwd, {mode: 'rpc'});
+  const calls = [];
+  // The host can supply full ownership without a matching environment default.
+  let upgrades = true;
+  const issue = { kind: 'deferred', code: 'memory-recovery-pending', resource: bundle, message: 'Recovery yielded', lastAttemptAt: 1,
+    detail: { recovery: { casePath: join(cwd, 'private', 'case.json'), cause: 'Malformed frontmatter', attempts: 7, messages: ['PRIVATE TRANSCRIPT'] } } };
+  try {
+    h.events.on('pi-session-maintenance:control:v1', request => {
+      calls.push(request.operation);
+      request.result = Promise.resolve({ config: { memoryOwnership: 'full', upgrades }, running: null,
+        admission: request.operation === 'run' ? 'No work started: deferred' : undefined,
+        sessions: [{ cwd, errors: { upgrade: { ...issue, lastAttemptAt: 2, resource: join(cwd, 'other'), message: 'OTHER BUNDLE' } } },
+          { cwd: '/different-workspace', errors: { upgrade: { ...issue, lastAttemptAt: 2, message: 'OTHER WORKSPACE' } } },
+          { cwd, errors: { upgrade: issue } }] });
+    });
+    await h.command('review');
+    assert.deepEqual(calls, ['status', 'run']);
+    const output = h.notices.at(-1)[0];
+    for (const expected of ['No work started: deferred', 'Last recorded upgrade issue', 'Malformed frontmatter', 'Recovery attempts: 7', issue.detail.recovery.casePath]) {
+      assert.ok(output.includes(expected), output);
+    }
+    assert.doesNotMatch(output, /OTHER BUNDLE|OTHER WORKSPACE|PRIVATE TRANSCRIPT/);
+    await assert.rejects(h.call('memory_upgrade', {action: 'next'}), error => {
+      assert.match(error.message, /coordinator-owned.*no user approval is needed/);
+      assert.doesNotMatch(error.message, /Ask the user to run/);
+      return true;
+    });
+    await assert.rejects(h.call('memory_upgrade', {action: 'complete', step: '001-validation-contract'}), /No user-approved/);
+    await assert.rejects(h.call('memory_upgrade', {action: 'finalize'}), /No user-approved/);
+    await h.command('status');
+    assert.match(h.messages.at(-1).message.content, /Recovery attempts: 7/);
+    upgrades = false;
+    await h.command('review');
+    assert.match(h.notices.at(-1)[0], /Upgrades stage is disabled/);
+    assert.deepEqual(calls, ['status', 'run', 'status', 'status', 'status']);
+    assert.equal(h.prompts.length, 0);
+    assert.equal(h.confirmations.length, 0);
+    assert.equal(existsSync(join(bundle, '.pi-okf-memory', 'state.json')), false);
+  } finally { rmSync(cwd, {recursive:true,force:true}); }
 });
 
 test('full ownership provisions a missing bundle and Git without any UI, using explicitly authorized identity',async()=>{

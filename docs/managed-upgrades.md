@@ -76,8 +76,15 @@ The managed prompt replaces interactive repair-plan approval with a transcript p
 For fully automatic repair/continuation rather than this host-managed foreground
 review, use [the maintenance adapter](maintenance.md) with full ownership and
 pi-session-maintenance. It persists tool-based recovery cases, budgets and retries.
-In full mode `/memory-upgrade` delegates to that coordinator without a dialog;
-`memory_upgrade` still cannot manufacture a managed run or bypass its step guards.
+In full mode `/memory-upgrade` requests normal coordinator admission without a
+dialog, and `/memory-upgrade status` inspects the last recorded bundle issue
+(including a recovery case path and attempt count when available). Start with the
+reported prerequisite, or watch ongoing work with `/maintenance watch`. If a
+case stalls, inspect `/maintenance history` and consider a more capable review
+model in `/maintenance settings`; `/maintenance retry` requests normal admission
+without discarding recovery evidence. Neither the command nor `memory_upgrade`
+can mark a recovery case resolved, bypass scheduler or step guards, or manufacture
+a completion receipt.
 
 A package-version change with no new steps re-verifies and commits an `application` receipt in the existing ledger. Old step records/timestamps are preserved and no LLM review is replayed. Legacy ledgers derive their adopted version from the last recorded step. An already adopted and committed version returns success without another commit or model turn. Stable numeric package downgrades and unknown/newer step state are refused.
 

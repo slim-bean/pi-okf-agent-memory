@@ -1,6 +1,6 @@
 # AGENTS.md
 
-pi-okf-agent-memory gives pi a local, Git-backed memory of Markdown concepts. Read `README.md` for usage, the session index, upgrades and development commands. Current package version: 0.12.1. There is no external binary; memory is stored, searched and validated in TypeScript.
+pi-okf-agent-memory gives pi a local, Git-backed memory of Markdown concepts. Read `README.md` for usage, the session index, upgrades and development commands. Current package version: 0.13.0. There is no external binary; memory is stored, searched and validated in TypeScript.
 
 ## Layout
 
@@ -16,7 +16,8 @@ pi-okf-agent-memory gives pi a local, Git-backed memory of Markdown concepts. Re
 - `lib/upgrade-extension.ts` / `lib/managed-upgrades.ts`: interactive and host workflows (`docs/managed-upgrades.md`). Automatic steps run inside `begin()` with no model turn.
 - `lib/git.ts` / `lib/git-status-async.ts` / `lib/maintenance-git.ts`: commit proof and bundle-scoped commits/pushes; preserve staging outside the bundle.
 - `lib/maintenance.ts`: `okf:maintenance:v1` adapter (`docs/maintenance.md`). `maintenance-context.ts` sizes existing memory for the reviewer; `maintenance-repair.ts` regenerates navigation and bounds link repair; `maintenance-consolidate.ts` rewrites stacked addenda (full ownership); `maintenance-model.ts` admits and runs one provider call.
-- `lib/autonomous-recovery.ts`: full-ownership tool worker, durable cases/checkpoints.
+- `lib/autonomous-recovery.ts`: full-ownership tool worker, durable cases/checkpoints and no-progress accounting. Context rotation must not reset stall counters or discard checkpoints; oversize diagnostics must not silently omit untracked work.
+- `lib/upgrade-admission.ts`: read-only projection of the coordinator’s bundle-scoped diagnostics for `/memory-upgrade`. It never grants approval or substitutes for commit evidence.
 - `lib/ownership.ts` / `lib/owned-access.ts` / `lib/maintenance-fingerprint.ts`: ownership policy, owner-only access restoration, corpus health keys.
 - `skills/okf-memory/`: why-only policy and tool workflow; it is also the unattended reviewer's prompt. `skills/okf-memory-upgrade/`: skill and guide for model-reviewed steps.
 - `test/`: jiti + real Git fixtures with mock pi API/hosts (`npm test`); `npm run test:rpc` runs real pi offline. `test/support.mjs` builds fixtures through the native store and provides a model-reviewed test step. Never launch an authenticated pi or call a model in tests.

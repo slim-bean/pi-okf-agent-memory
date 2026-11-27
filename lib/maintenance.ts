@@ -146,7 +146,8 @@ export function registerMemoryMaintenance(pi: ExtensionAPI, options: { packageVe
   const cancel = () => active?.abort(new Error("Foreground activity interrupted memory maintenance"));
   pi.on("input", event => {
     // Optional host inspection/admission commands are passive; all ordinary input still wins.
-    if (!event?.text || !/^\/maintenance(?:[ \t]+(?:watch|history|logs|status|help|run|retry)(?:[ \t]+[^\r\n]*)?)?[ \t]*$/.test(event.text)) cancel();
+    if (!event?.text || (!/^\/maintenance(?:[ \t]+(?:watch|history|logs|status|help|run|retry)(?:[ \t]+[^\r\n]*)?)?[ \t]*$/.test(event.text) &&
+        !/^\/memory-upgrade[ \t]+status[ \t]*$/.test(event.text))) cancel();
   });
   pi.on("agent_start", cancel);
   pi.events.on("pi-session-maintenance:capabilities:v1", (data) => {
@@ -235,11 +236,14 @@ export function registerMemoryMaintenance(pi: ExtensionAPI, options: { packageVe
       const legacyPendingRepair = join(r.workDir, "recovery-pending", digest([bundle, r.operation]) + ".json");
       const account = (usage: any) => { cycleCost += usage?.cost?.total ?? 0; r.onUsage?.(usage); };
       const recover = async (error: unknown) => {
-        if (cycleCost >= (r.maxCost ?? 0.5)) throw new MemoryMaintenanceIssue("deferred", "memory-recovery-pending", bundle, "Recovery retained for the next opportunity's model budget.", { ownership });
+        const cause = (error instanceof Error ? error.message : String(error)).slice(0, 1200);
+        if (cycleCost >= (r.maxCost ?? 0.5)) throw new MemoryMaintenanceIssue("deferred", "memory-recovery-pending", bundle,
+          "Recovery retained for the next opportunity's model budget.", { ownership, recovery: { pendingRepair, cause } });
         const recovered = await autonomousRecovery({ context: r.context, model, bundle, cwd: r.cwd, workDir: r.workDir,
           readRoots: [options.skillsDir],
           operation: r.operation, cause: error, source: r.source, signal, guard, persistModelContext: r.modelTranscripts !== false, maxCost: Math.max(0, (r.maxCost ?? 0.5) - cycleCost), timeoutMs: r.modelTimeoutMs, maxTurns: r.recoveryMaxTurns,
-          onUsage: account, onProgress: r.onProgress, onModelEvent: r.onModelEvent, onEvent: r.onEvent,
+          onUsage: account, onProgress: r.onProgress, onModelEvent: r.onModelEvent,
+          onEvent: r.onEvent,
           verify: async completion => {
             guard();
             // The worker edits concept files directly; navigation is the host's to regenerate.
@@ -254,7 +258,14 @@ export function registerMemoryMaintenance(pi: ExtensionAPI, options: { packageVe
             if (r.operation === "push") await pushKnowledge(bundle, signal);
             r.onEvent?.("validation", validation); r.onEvent?.("commit", { bundle, commit });
             return { validation, commit, reviewedSourceHash, upgraded: upgraded && runner.status().finished };
-          } });
+          } }).catch((issue: unknown) => {
+            if (issue instanceof MemoryMaintenanceIssue) {
+              const detail = issue.detail as { recovery?: Record<string, unknown> } | undefined;
+              throw new MemoryMaintenanceIssue(issue.kind, issue.code, issue.resource, issue.message,
+                { ...detail, recovery: { pendingRepair, cause, ...detail?.recovery } });
+            }
+            throw issue;
+          });
         if (existsSync(pendingRepair)) unlinkSync(pendingRepair);
         acknowledgeRepair(r.workDir, bundle);
         const evidence = recovered.evidence as { reviewedSourceHash?: string; upgraded?: boolean };
@@ -519,7 +530,7 @@ export function registerMemoryMaintenance(pi: ExtensionAPI, options: { packageVe
           "No authorized Git author identity is available. Provision Git identity or memoryGitIdentity; recovery never invents an author.", { ownership, external: { code: "credentials", reason: issue.message } });
         atomic(pendingRepair, { cause: error instanceof Error ? error.message : String(error), ownership, at: new Date().toISOString() });
         if (modelCalls) throw new MemoryMaintenanceIssue("deferred", "memory-recovery-pending", bundle,
-          "Full-ownership recovery is queued for the next idle opportunity; extraction/progress is retained.", { ownership, recovery: { pendingRepair } });
+          "Full-ownership recovery is queued for the next idle opportunity; extraction/progress is retained.", { ownership, recovery: { pendingRepair, cause: (error instanceof Error ? error.message : String(error)).slice(0, 1200) } });
         return await recover(error);
       } finally { runner.release(); }
     })().finally(() => { if (active === own) active = undefined; });

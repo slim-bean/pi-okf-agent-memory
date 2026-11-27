@@ -94,23 +94,40 @@ The worker is told the bundle format and that `index.md`/`catalog.md` are genera
 host regenerates them before verifying, so a worker never needs to edit navigation.
 Original corpus bytes are checkpointed before writes; read versions and
 source/lock guards protect normal file-tool writes. Interrupted calls are inspected,
-not blindly replayed. Corpus snapshots are content-addressed; individual full
-snapshots are capped at 8 MiB. Owner-only permission metadata can be repaired before
-locking/checkpoint reads when the agent owns the files; no symlink traversal,
+not blindly replayed. Corpus snapshots are content-addressed and include tracked,
+untracked and Git-ignored bundle files (except `.git`, `lock.json` and entries ending
+in `.tmp`); symlink targets are not copied. The cap is 8 MiB of summed file sizes,
+not serialized JSON size. An oversized checkpoint blocks recovery and reports the
+five largest included paths and their sizes. Move only verified disposable scratch
+files outside the bundle before retrying. Owner-only permission metadata can be repaired
+before locking/checkpoint reads when the agent owns the files; no symlink traversal,
 foreign UID rights or Git-object mode changes. Private work inside a bundle is refused.
 
 Each opportunity permits at most `recoveryMaxTurns` sequential recovery calls
 (default 50, whole number 1–100), bounded independently by the
 reported-cost allowance and per-call deadline; shell commands have a 60s bound.
 Opportunity exhaustion defers durable progress for automatic continuation; transient
-provider failures back off without asking a human. Content fingerprints at opportunity
-boundaries distinguish real corpus changes from repeated checkpoint events. After
-three unchanged opportunities with no verified completion, `memory-recovery-stalled`
-is an **error**, not a deferral, so the coordinator's ordinary backoff and `maxRetries`
-apply. Evidence is retained and real repairs can still resume. An independently changed
-corpus or selected model resets the no-progress streak. No-op scratch experiments,
-context resets and reading prior transcripts do not reset it. These fingerprints detect
-content changes, not semantic improvement; validation/commit still decide success.
+provider failures count as attempts and back off. Foreground cancellation does not count
+as no progress. Content fingerprints distinguish corpus changes from repeated checkpoint
+writes; validation and commit still decide success. After three unchanged opportunities,
+`memory-recovery-stalled` is an **error**, so coordinator backoff and `maxRetries` apply.
+The worker additionally pauses before further model calls after four consecutive attempts
+at the same task with no corpus change, verified completion or assistant tool call, or
+when a streak of at least three no-progress attempts spans a day. An independently
+changed corpus, selected model, failure cause, recovery turn limit or model timeout lets the case try again. Rotating context
+or reading evidence does not reset the streak.
+
+Worker issues include `detail.recovery` with `casePath`, `attempts`, `model`, `cause`,
+`noProgress`, and `lastProgressAt` (Unix milliseconds, or `null` if unknown). A hard
+pause adds `paused` and `stallReason` and emits `recovery-stalled`. Inspect the private case,
+fix the underlying corpus issue, or select a more capable model to resume.
+
+Retries reuse an identical unanswered user prompt instead of appending it. A context
+at or above 192 messages rotates at a completed exchange boundary, before the next call;
+a batch of tool results stays together. The character and provider-capacity checks still
+apply. Rotation preserves checkpoints and counters, and archives prior context only when
+model transcript capture is enabled. Legacy user-only retry sequences are detected before
+rotation, so archiving them cannot hide an existing stall.
 Unsupported provider capabilities,
 missing credentials/compatible runtimes/mounts or ownership outside memory scope are
 structured `memory-external` host prerequisites. A model's external claim alone is

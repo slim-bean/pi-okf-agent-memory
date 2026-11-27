@@ -9,8 +9,12 @@ import { MODEL_CAPACITY_CODES, maintenanceModel } from "./maintenance-model.js";
 
 interface Case {
   schema: 1; attempts: number; cause: string; messages: any[]; checkpoints: string[]; status: string;
-  noProgress?: number; progressHash?: string; progressModel?: string;
+  noProgress?: number; progressHash?: string; progressModel?: string; progressLimits?: string;
+  noProgressSince?: number; lastProgressAt?: number; toolFreeAttempts?: number;
 }
+const MAX_CONTEXT_ENTRIES = 192;
+const MAX_TOOL_FREE_ATTEMPTS = 4;
+const STALL_AGE_MS = 24 * 60 * 60 * 1000;
 const hash = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 function atomic(file: string, value: unknown) {
   mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
@@ -25,22 +29,44 @@ export function canonical(path: string): string {
   if (stat) return realpathSync(path); // dangling links are errors, not new write targets
   return join(canonical(dirname(path)), basename(path));
 }
+const CHECKPOINT_LIMIT = 8 * 1024 * 1024;
+const CHECKPOINT_DIAGNOSTIC_PATHS = 5;
 export function recoverySnapshot(bundle: string): Record<string, string> {
   const files: Record<string, string> = {}; let bytes = 0;
+  const largest: { path: string; bytes: number }[] = [];
   const walk = (dir: string) => {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
       if (entry.name === ".git" || entry.name === "lock.json" || entry.name.endsWith(".tmp")) continue;
       const path = join(dir, entry.name);
-      if (entry.isSymbolicLink()) { files[relative(bundle, path)] = `[symlink ${JSON.stringify(readlinkSync(path))}; target not copied]`; continue; }
+      if (entry.isSymbolicLink()) {
+        if (bytes <= CHECKPOINT_LIMIT) files[relative(bundle, path)] = `[symlink ${JSON.stringify(readlinkSync(path))}; target not copied]`;
+        continue;
+      }
       if (entry.isDirectory()) walk(path);
       else {
-        bytes += lstatSync(path).size;
-        if (bytes > 8 * 1024 * 1024) throw new MemoryMaintenanceIssue("blocked", "memory-external", bundle, "Recovery checkpoint exceeds 8 MiB capacity; supply sufficient checkpoint storage/capacity.", { ownership: "full", external: { code: "capacity" } });
-        files[relative(bundle, path)] = readFileSync(path, "utf8");
+        const name = relative(bundle, path);
+        const size = lstatSync(path).size;
+        bytes += size;
+        // After crossing the cap, scan metadata only, including later directories.
+        // Never publish an incomplete snapshot or omit uncommitted work to make it fit.
+        const last = largest[largest.length - 1];
+        if (largest.length < CHECKPOINT_DIAGNOSTIC_PATHS || size > last!.bytes || (size === last!.bytes && name < last!.path)) {
+          largest.push({ path: name, bytes: size });
+          largest.sort((a, b) => b.bytes - a.bytes || (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+          if (largest.length > CHECKPOINT_DIAGNOSTIC_PATHS) largest.pop();
+        }
+        if (bytes <= CHECKPOINT_LIMIT) files[name] = readFileSync(path, "utf8");
       }
     }
   };
-  walk(bundle); return files;
+  walk(bundle);
+  if (bytes > CHECKPOINT_LIMIT) {
+    const paths = largest.map(file => `${JSON.stringify(file.path)} (${file.bytes} bytes)`).join(", ");
+    throw new MemoryMaintenanceIssue("blocked", "memory-external", bundle,
+      `Recovery checkpoint exceeds 8 MiB capacity: ${bytes} bytes (limit ${CHECKPOINT_LIMIT} bytes). Move verified disposable scratch files outside the bundle, then retry. Largest bundle paths: ${paths}. Checkpoints include untracked and Git-ignored files to preserve local work.`,
+      { ownership: "full", external: { code: "capacity" }, checkpoint: { bytes, limitBytes: CHECKPOINT_LIMIT, largest } });
+  }
+  return files;
 }
 
 /** Trusted full-ownership worker: provider-neutral tool loop, no pi subprocess, UI or discovery. */
@@ -69,7 +95,8 @@ export async function autonomousRecovery(options: {
     state = existsSync(casePath) ? JSON.parse(readFileSync(casePath, "utf8")) : empty();
     if (state?.schema !== 1) throw new MemoryMaintenanceIssue("blocked", "memory-external", bundle, "Recovery case requires a compatible runtime; its evidence was preserved.", { ownership: "full", external: { code: "incompatible-runtime" } });
     if (!Array.isArray(state.messages) || !Array.isArray(state.checkpoints) || !Number.isSafeInteger(state.attempts) || state.attempts < 0 ||
-        (state.noProgress !== undefined && (!Number.isSafeInteger(state.noProgress) || state.noProgress < 0))) throw new Error("Malformed recovery case");
+        [state.noProgress, state.noProgressSince, state.lastProgressAt, state.toolFreeAttempts].some(n =>
+          n !== undefined && (!Number.isSafeInteger(n) || n < 0))) throw new Error("Malformed recovery case");
   } catch (error) {
     if (error instanceof MemoryMaintenanceIssue) throw error;
     if (existsSync(casePath)) renameSync(casePath, `${casePath}.corrupt-${randomUUID()}`);
@@ -78,21 +105,78 @@ export async function autonomousRecovery(options: {
   // Keep native provider messages in memory for this opportunity, but honor
   // modelTranscripts:false in durable cases as well as the host run transcript.
   Object.defineProperty(state, "toJSON", { value: () => ({ ...state, messages: options.persistModelContext === false ? [] : state.messages }) });
-  // Provider context can be restarted without losing the case/checkpoints. The
-  // agent can read the complete archived transcript by path instead of sampling it.
-  if (state.messages.length && (state.status === "complete" || JSON.stringify(state.messages).length > Math.min(180_000, options.model.contextWindow))) {
-    if (options.persistModelContext !== false) atomic(join(dir, `transcript-${state.attempts}-${randomUUID()}.json`), state.messages);
+  const archiveContext = (reason: string, prefix = "transcript") => {
+    if (!state.messages.length) return;
+    const path = options.persistModelContext === false ? undefined : join(dir, `${prefix}-${state.attempts}-${randomUUID()}.json`);
+    if (path) atomic(path, state.messages);
+    const entries = state.messages.length;
     state.messages = [];
+    atomic(casePath, state);
+    options.onEvent?.("recovery-context-reset", { casePath, path, reason, entries });
+  };
+  const prompt = JSON.stringify({ operation: options.operation, failure: cause, bundle, workspace: options.cwd, recoveryCase: casePath,
+    source: source && typeof source === "object" ? { path: source.path, hash: source.hash, evidence: "Read the original session by path as needed; all branches matter." } : source, authority: "full" });
+  const isRetryPrompt = (message: any) => {
+    if (message?.role !== "user" || typeof message.content !== "string") return false;
+    try {
+      const { attempt: _legacyAttempt, ...packet } = JSON.parse(message.content);
+      return JSON.stringify(packet) === prompt;
+    } catch { return false; }
+  };
+  options.guard();
+  const initialHash = hash(recoverySnapshot(bundle));
+  const model = `${options.model.provider}/${options.model.id}`;
+  const corpusChanged = state.progressHash !== undefined && state.progressHash !== initialHash;
+  const limits = JSON.stringify([maxTurns, options.timeoutMs ?? null]);
+  const baselineChanged = (state.progressLimits !== undefined && state.progressLimits !== limits) || state.status === "complete" || state.cause !== cause || corpusChanged ||
+    (state.progressModel !== undefined && state.progressModel !== model);
+  if (baselineChanged) {
+    if (corpusChanged) state.lastProgressAt = Date.now();
+    state.noProgress = 0; state.noProgressSince = undefined; state.toolFreeAttempts = 0;
   }
-  state.attempts++; state.cause = cause; state.status = "running";
+  // Older cases didn't count failures without an assistant response. Recognize
+  // their trailing identical request packets before rotating loaded context.
+  if (state.toolFreeAttempts === undefined && ["pending", "stalled"].includes(state.status) && options.persistModelContext !== false) {
+    let i = state.messages.length;
+    while (i > 0 && isRetryPrompt(state.messages[i - 1])) i--;
+    state.toolFreeAttempts = Math.min(state.attempts, state.messages.length - i);
+    state.noProgress = Math.max(state.noProgress ?? 0, state.toolFreeAttempts);
+    const first = state.messages[i]?.timestamp;
+    if (Number.isSafeInteger(first) && first > 0 && first <= Date.now()) state.noProgressSince ??= first;
+  }
+  state.cause = cause; state.progressHash = initialHash; state.progressModel = model; state.progressLimits = limits;
+  const recoveryDetail = () => ({ casePath, attempts: state.attempts, status: state.status, noProgress: state.noProgress ?? 0,
+    lastProgressAt: state.lastProgressAt ?? null, toolFreeAttempts: state.toolFreeAttempts ?? 0, model, cause });
+  const hardStall = () => (state.toolFreeAttempts ?? 0) >= MAX_TOOL_FREE_ATTEMPTS ? "repeated-tool-free-attempts" :
+    (state.noProgress ?? 0) >= 3 && state.noProgressSince !== undefined && Date.now() - state.noProgressSince >= STALL_AGE_MS ? "no-progress-for-a-day" : undefined;
+  const failStalled = (stallReason: ReturnType<typeof hardStall>): never => {
+    const recovery = { ...recoveryDetail(), ...(stallReason ? { stallReason, paused: true } : {}) };
+    if (stallReason) options.onEvent?.("recovery-stalled", recovery);
+    const why = stallReason === "repeated-tool-free-attempts" ? `Recovery could not make progress or use tools across ${recovery.toolFreeAttempts} attempts at the same task.` :
+      stallReason === "no-progress-for-a-day" ? "Recovery has gone at least one day without corpus changes or verified completion." :
+        "Recovery made no corpus changes or verified completion for three opportunities.";
+    throw new MemoryMaintenanceIssue("error", "memory-recovery-stalled", bundle,
+      `${why} ${stallReason ? "Unchanged recovery is paused before model calls; inspect the case, repair the bundle, or select a more capable model." : "Automatic retries now use error backoff and the coordinator retry limit; inspect the case or select a more capable model."}`,
+      { ownership: "full", recovery });
+  };
+  if (baselineChanged) archiveContext("new recovery baseline");
+  const rotateContext = () => {
+    if (state.messages.length >= MAX_CONTEXT_ENTRIES) archiveContext("entry limit");
+    else if (JSON.stringify(state.messages).length > Math.min(180_000, options.model.contextWindow)) archiveContext("character limit");
+  };
+  rotateContext();
+  const parked = hardStall();
+  if (parked) { state.status = "stalled"; atomic(casePath, state); failStalled(parked); }
+  state.attempts++; state.status = "running";
   // A crashed tool call may have executed. Do not blindly replay a mutation.
   const completed = new Set(state.messages.filter(m => m.role === "toolResult").map(m => m.toolCallId));
   for (const message of [...state.messages]) if (message.role === "assistant") for (const call of message.content ?? []) if (call.type === "toolCall" && !completed.has(call.id)) {
     state.messages.push({ role: "toolResult", toolCallId: call.id, toolName: call.name, content: [{ type: "text", text: "Interrupted tool execution has an unknown outcome. Inspect current files/Git/checkpoints before deciding whether to repeat it." }], isError: true, timestamp: Date.now() });
   }
-  state.messages.push({ role: "user", content: JSON.stringify({ operation: options.operation, failure: cause, bundle,
-    workspace: options.cwd, recoveryCase: casePath, source: options.source && typeof options.source === "object" ? { path: (options.source as any).path, hash: (options.source as any).hash, evidence: "Read the original session by path as needed; all branches matter." } : options.source, authority: "full", attempt: state.attempts }), timestamp: Date.now() });
-  atomic(casePath, state);
+  const ensurePrompt = () => {
+    if (!isRetryPrompt(state.messages.at(-1))) state.messages.push({ role: "user", content: prompt, timestamp: Date.now() });
+  };
+  ensurePrompt(); atomic(casePath, state);
   const checkpoint = () => {
     const files = recoverySnapshot(bundle);
     const path = join(dir, "checkpoints", hash(files) + ".json");
@@ -115,33 +199,38 @@ export async function autonomousRecovery(options: {
     .map(m => m.details.fullOutputPath).filter((p: string) => existsSync(p)).map((p: string) => canonical(p)));
   const readVersions = new Map<string, string>();
   let cost = 0;
-  const initialHash = hash(recoverySnapshot(bundle));
-  const progressModel = `${options.model.provider}/${options.model.id}`;
-  const pending = (message: string): never => {
+  const startedAt = Date.now();
+  let usedTools = false;
+  const pending = (message: string, transient = false): never => {
     const currentHash = hash(recoverySnapshot(bundle));
-    const sameBaseline = state.progressHash === initialHash && state.progressModel === progressModel;
-    state.noProgress = currentHash === initialHash ? (sameBaseline ? state.noProgress ?? 0 : 0) + 1 : 0;
-    state.progressHash = currentHash; state.progressModel = progressModel;
-    state.status = state.noProgress >= 3 ? "stalled" : "pending";
-    atomic(casePath, state);
-    options.onEvent?.("recovery-progress", { casePath, changed: currentHash !== initialHash, noProgress: state.noProgress, status: state.status });
-    if (state.status === "stalled") throw new MemoryMaintenanceIssue("error", "memory-recovery-stalled", bundle,
-      "Recovery made no corpus changes or verified completion for three opportunities. Automatic retries now use error backoff and the coordinator retry limit; inspect the case or select a more capable model.",
-      { ownership: "full", recovery: { casePath, attempts: state.attempts, status: state.status, noProgress: state.noProgress } });
-    throw new MemoryMaintenanceIssue("deferred", "memory-recovery-pending", bundle, message,
-      { ownership: "full", recovery: { casePath, attempts: state.attempts, status: "pending" } });
+    const changed = currentHash !== initialHash;
+    state.noProgress = changed ? 0 : (state.noProgress ?? 0) + 1;
+    state.toolFreeAttempts = changed || usedTools ? 0 : (state.toolFreeAttempts ?? 0) + 1;
+    if (changed) { state.lastProgressAt = Date.now(); state.noProgressSince = undefined; }
+    else state.noProgressSince ??= startedAt;
+    state.progressHash = currentHash;
+    const stallReason = hardStall();
+    state.status = stallReason || state.noProgress >= 3 ? "stalled" : "pending";
+    rotateContext(); atomic(casePath, state);
+    options.onEvent?.("recovery-progress", { ...recoveryDetail(), changed });
+    if (state.status === "stalled") failStalled(stallReason);
+    throw new MemoryMaintenanceIssue(transient ? "error" : "deferred", transient ? "memory-recovery-transient" : "memory-recovery-pending", bundle, message,
+      { ownership: "full", recovery: recoveryDetail() });
   };
   options.onProgress?.(`memory recovery: autonomous investigation (attempt ${state.attempts})`);
-  options.onEvent?.("recovery", { ownership: "full", casePath, cause, attempt: state.attempts });
+  options.onEvent?.("recovery", { ownership: "full", ...recoveryDetail(), attempt: state.attempts });
   try {
     for (let turn = 0; turn < maxTurns; turn++) {
       options.guard();
       if (cost >= (options.maxCost ?? 0.5)) pending("Autonomous recovery reached this opportunity's model budget; progress retained for automatic continuation.");
+      rotateContext();
+      if (!state.messages.length) { ensurePrompt(); atomic(casePath, state); }
       const response = await maintenanceModel({ context: options.context, model: options.model, input: { systemPrompt, messages: state.messages, tools: declarations },
         signal, timeoutMs: options.timeoutMs, onUsage: usage => { cost += usage?.cost?.total ?? 0; options.onUsage?.(usage); },
         onModelEvent: options.onModelEvent ? event => options.onModelEvent!({ ...event, replay: event.type === "start" && state.messages.some(m => m.role === "assistant") }) : undefined });
       state.messages.push(response); atomic(casePath, state);
       const calls = response.content.filter(part => part.type === "toolCall");
+      usedTools ||= calls.length > 0;
       if (!calls.length) {
         options.guard();
         const text = response.content.filter((part: any) => part.type === "text").map((part: any) => part.text).join("\n");
@@ -152,8 +241,9 @@ export async function autonomousRecovery(options: {
         // pessimistic answer; never convert its completion claim into a receipt.
         try {
           const evidence = await options.verify(completion);
-          state.status = "complete"; atomic(casePath, state);
-          options.onEvent?.("recovery-result", { casePath, evidence }); return { casePath, evidence };
+          state.status = "complete"; state.lastProgressAt = Date.now(); state.noProgress = 0;
+          state.noProgressSince = undefined; state.toolFreeAttempts = 0; atomic(casePath, state);
+          options.onEvent?.("recovery-result", { ...recoveryDetail(), evidence }); return { casePath, evidence };
         } catch (error) {
           signal.throwIfAborted();
           const externalPatterns: Record<string, RegExp> = {
@@ -167,7 +257,7 @@ export async function autonomousRecovery(options: {
           if (external && operationalEvidence && typeof external.reason === "string" && external.reason.trim()) {
             state.status = "external"; atomic(casePath, state);
             throw new MemoryMaintenanceIssue("blocked", "memory-external", bundle, `Autonomous recovery reports an external prerequisite: ${external.reason}`,
-              { ownership: "full", external, recovery: { casePath, attempts: state.attempts } });
+              { ownership: "full", external, recovery: recoveryDetail() });
           }
           state.messages.push({ role: "user", content: `Host verification still fails: ${error instanceof Error ? error.message : String(error)}. Continue investigating/repairing. Do not wait for a human.`, timestamp: Date.now() });
           atomic(casePath, state); continue;
@@ -206,7 +296,10 @@ export async function autonomousRecovery(options: {
           }
           if (typeof result.details?.fullOutputPath === "string" && existsSync(result.details.fullOutputPath)) artifacts.add(canonical(result.details.fullOutputPath));
         } catch (error) {
-          signal.throwIfAborted(); isError = true;
+          signal.throwIfAborted();
+          // A checkpoint capacity blocker needs host intervention, not another tool attempt.
+          if (error instanceof MemoryMaintenanceIssue && error.code === "memory-external") throw error;
+          isError = true;
           result = { content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }] };
         }
         const message = { role: "toolResult", toolCallId: call.id, toolName: call.name, content: result.content,
@@ -221,29 +314,25 @@ export async function autonomousRecovery(options: {
     if ((error as MemoryMaintenanceIssue)?.code === "model-auth") {
       state.status = "external"; atomic(casePath, state);
       throw new MemoryMaintenanceIssue("blocked", "memory-external", bundle, "The configured recovery model has no authorized provider credentials; provision them through the host.",
-        { ownership: "full", external: { code: "credentials", reason: (error as Error).message }, recovery: { casePath } });
+        { ownership: "full", external: { code: "credentials", reason: (error as Error).message }, recovery: recoveryDetail() });
     }
     if ((error as MemoryMaintenanceIssue)?.code === "memory-context-capacity") {
       if (state.messages.length > 1) {
-        if (options.persistModelContext !== false) atomic(join(dir, `context-capacity-${randomUUID()}.json`), state.messages);
-        state.messages = [];
+        archiveContext("provider capacity", "context-capacity");
         return pending("Recovery context archived at its capacity limit; a fresh tool context will continue automatically.");
       }
       state.status = "external"; atomic(casePath, state);
       throw new MemoryMaintenanceIssue("blocked", "memory-external", bundle, "The configured model cannot fit even the initial recovery tools/instructions; provision sufficient context capacity.",
-        { ownership: "full", external: { code: "capacity" }, recovery: { casePath } });
+        { ownership: "full", external: { code: "capacity" }, recovery: recoveryDetail() });
     }
     const providerError = error instanceof Error ? error.message : String(error);
     if (/(?:unsupported|not supported|does not support).*(?:tools?|function.call)|(?:tools?|function.call).*(?:unsupported|not supported|does not support)/i.test(providerError)) {
       state.status = "external"; atomic(casePath, state);
       throw new MemoryMaintenanceIssue("blocked", "memory-external", bundle, "The selected model/provider does not support recovery tools; provision a compatible review model.",
-        { ownership: "full", external: { code: "incompatible-runtime", reason: providerError }, recovery: { casePath } });
+        { ownership: "full", external: { code: "incompatible-runtime", reason: providerError }, recovery: recoveryDetail() });
     }
     // Output-limit/timeouts are provider-capacity failures of this turn: keep the case pending like other transient failures.
     if ((error as MemoryMaintenanceIssue)?.maintenanceIssue === 1 && !MODEL_CAPACITY_CODES.includes((error as MemoryMaintenanceIssue).code)) throw error;
-    state.status = "pending"; atomic(casePath, state);
-    throw new MemoryMaintenanceIssue("error", "memory-recovery-transient", bundle,
-      `Autonomous recovery encountered an execution/provider failure and will retry automatically: ${error instanceof Error ? error.message : String(error)}`,
-      { ownership: "full", recovery: { casePath, attempts: state.attempts, status: "pending" } });
+    return pending(`Autonomous recovery encountered an execution/provider failure and will retry automatically: ${providerError}`, true);
   }
 }
